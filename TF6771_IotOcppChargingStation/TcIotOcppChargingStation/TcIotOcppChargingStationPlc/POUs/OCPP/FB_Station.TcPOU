@@ -1,0 +1,533 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_Station" Id="{641a174c-b428-44e4-b137-d2cb1240cc19}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Station
+VAR_OUTPUT
+	bBusy : BOOL;
+	bError : BOOL;
+	eState : E_OCPP1_ChargePointStatus := E_OCPP1_ChargePointStatus.Available;
+	eErrorState : E_OCPP1_ChargePointStatus := E_OCPP1_ChargePointStatus.None;
+END_VAR
+VAR
+	// client
+	_oClient : FB_OCPP1_Client(0);
+	// connectors
+	_arrConnectors : ARRAY[1..Param_OCPP.nConnectorCount] OF POINTER TO FB_Connector;
+	_nConnectorCnt : UDINT;
+	_nConnectorMax : UDINT;
+	// configuration
+	_fbConfiguration : FB_OCPP1_Configuration;
+	// charging profile
+	_fbChargingProfile : FB_OCPP1_ChargingProfile;
+	_arrCharging : ARRAY[1..Param_OCPP.nConnectorCount] OF BOOL;
+	// reset
+	_fbTcRestart : TC_Restart;
+	_fbOsRestart : NT_Reboot;
+	
+	bTest: BOOL;
+END_VAR
+VAR PERSISTENT
+	_bAvailable : BOOL := TRUE;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="AddConnector" Id="{cc23276d-89e4-4fa5-a323-d4bc6146febd}">
+      <Declaration><![CDATA[METHOD INTERNAL AddConnector : BOOL
+VAR_INPUT
+	nConnectorId : UDINT;
+	pConnector : POINTER TO FB_Connector;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nConnectorId < 1 OR nConnectorId > Param_OCPP.nConnectorCount THEN
+	RETURN; // invalid connector id!
+END_IF
+
+IF pConnector = 0 THEN
+	RETURN; // invalid pointer to connector!
+END_IF
+
+IF _arrConnectors[nConnectorId] <> 0 THEN
+	RETURN; // connector id already used!
+END_IF
+
+_arrConnectors[nConnectorId] := pConnector;
+
+_nConnectorCnt := _nConnectorCnt + 1;
+IF nConnectorId > _nConnectorMax THEN _nConnectorMax := nConnectorId; END_IF
+
+AddConnector := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="Available" Id="{e2cca5cb-b3be-49e8-b985-2653b63e8311}">
+      <Declaration><![CDATA[PROPERTY Available : BOOL]]></Declaration>
+      <Get Name="Get" Id="{76c03dde-6ad0-42e7-acd3-34a9d1faa56b}">
+        <Declaration><![CDATA[]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Available := _oClient.IsConnected
+	AND eState <> E_OCPP1_ChargePointStatus.Unavailable
+	AND eState <> E_OCPP1_ChargePointStatus.Faulted;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="Client" Id="{79e88367-a91d-4763-adf2-305fd3af58b9}">
+      <Declaration><![CDATA[PROPERTY INTERNAL Client : POINTER TO FB_OCPP1_Client]]></Declaration>
+      <Get Name="Get" Id="{015bc2a6-85cf-4ab8-beb3-b976b7d77e57}">
+        <Declaration><![CDATA[]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Client := ADR(_oClient);]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="Configuration" Id="{f3a11858-5846-0c45-014d-0c6664c09bc5}">
+      <Declaration><![CDATA[METHOD PRIVATE Configuration : BOOL
+VAR_STAT
+	sValue : T_OCPP1_ConfigValue;
+	nValue : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbConfiguration.HasChanged(E_OCPP1_ConfigKey.HeartbeatInterval) THEN
+	sValue := _fbConfiguration.GetValue(E_OCPP1_ConfigKey.HeartbeatInterval);
+	_oClient.HeartbeatInterval := UDINT_TO_TIME(STRING_TO_UDINT(sValue)*1000);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Execute" Id="{cdb70853-b9b2-4790-95e0-97f2730795ab}">
+      <Declaration><![CDATA[METHOD Execute : BOOL
+VAR
+	nIdx : UDINT;
+	eAction : E_OCPP1_Action;
+	mPeriod : ST_OCPP1_ChargingSchedulePeriod;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_oClient.Execute(TRUE);
+bBusy := _oClient.bBusy;
+
+IF _oClient.bError THEN
+	bError := TRUE;
+	eErrorState := eState;
+	eState := E_OCPP1_ChargePointStatus.Faulted;
+END_IF
+
+// ================================================================================
+// Execute Connectors and apply Charging Profile
+
+FOR nIdx := 1 TO Param_OCPP.nConnectorCount DO
+	_arrConnectors[nIdx]^.Execute();
+	_arrCharging[nIdx] := _arrConnectors[nIdx]^.bCharging;
+END_FOR
+
+_fbChargingProfile.Execute(_arrCharging, _oClient);
+
+FOR nIdx := 1 TO Param_OCPP.nConnectorCount DO
+	_fbChargingProfile.GetCurrentPeriod(nIdx, mPeriod);
+	_arrConnectors[nIdx]^.SetChargingSchedulePeriod(mPeriod);
+END_FOR
+
+// ================================================================================
+// State machine of Charging Station
+
+CASE eState OF
+	E_OCPP1_ChargePointStatus.Available: // Operative
+		IF NOT _bAvailable THEN
+			eState := E_OCPP1_ChargePointStatus.Unavailable;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.Unavailable: // Inoperative, e.g. as result of a ChangeAvailability command.
+		IF _bAvailable THEN
+			eState := E_OCPP1_ChargePointStatus.Available;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.Faulted: // Inoperative, when charger or connector has reported an error and is not available for energy delivery.
+
+ELSE
+	bError := TRUE;
+	eErrorState := eState;
+	eState := E_OCPP1_ChargePointStatus.Faulted;
+END_CASE
+
+// ================================================================================
+// Send status of Charging Station
+
+SendStatusNotification();
+
+// ================================================================================
+// Receive requests from Management System
+
+IF _oClient.PollRequest(eAction => eAction) THEN
+	CASE eAction OF
+		// Core
+		E_OCPP1_Action.RemoteStartTransaction:
+			RecvRemoteStartTransaction();
+		E_OCPP1_Action.RemoteStopTransaction:
+			RecvRemoteStopTransaction();
+		E_OCPP1_Action.ChangeAvailability:
+			RecvChangeAvailability();
+		E_OCPP1_Action.UnlockConnector:
+			RecvUnlockConnector();
+		E_OCPP1_Action.ChangeConfiguration:
+			_fbConfiguration.Execute(_oClient);
+		E_OCPP1_Action.GetConfiguration:
+			_fbConfiguration.Execute(_oClient);
+		//E_OCPP1_Action.ClearCache
+		E_OCPP1_Action.Reset:
+			RecvReset();
+		// Remote Trigger
+		E_OCPP1_Action.TriggerMessage:
+			RecvTriggerMessage();
+		// Reservation
+		E_OCPP1_Action.ReserveNow:
+			RecvReserveNow();
+		E_OCPP1_Action.CancelReservation:
+			RecvReserveCancel();
+		// Smart Charging
+		E_OCPP1_Action.SetChargingProfile:
+			_fbChargingProfile.Execute(_arrCharging, _oClient);
+		E_OCPP1_Action.GetCompositeSchedule:
+			_fbChargingProfile.Execute(_arrCharging, _oClient);
+		E_OCPP1_Action.ClearChargingProfile:
+			_fbChargingProfile.Execute(_arrCharging, _oClient);
+		// Authentication
+		//E_OCPP1_Action.GetLocalListVersion
+		//E_OCPP1_Action.SendLocalList
+		// Firmware
+		//E_OCPP1_Action.GetDiagnostics
+		//E_OCPP1_Action.UpdateFirmware
+		// Vendor
+		E_OCPP1_Action.DataTransfer:
+			RecvDataTransfer();
+		// Security
+		//E_OCPP1_Action.ExtendedTriggerMessage
+		//E_OCPP1_Action.GetLog
+		//E_OCPP1_Action.GetInstalledCertificateIds
+		//E_OCPP1_Action.CertificateSigned
+		//E_OCPP1_Action.SignCertificate
+		//E_OCPP1_Action.InstallCertificate
+		//E_OCPP1_Action.DeleteCertificate
+		//E_OCPP1_Action.SignedUpdateFirmware
+	ELSE
+		// TODO response
+	END_CASE
+END_IF
+
+// ================================================================================
+// Additional functionalities
+
+_fbTcRestart(RESTART := FALSE);
+_fbOsRestart(START := FALSE);
+
+Configuration();
+SendDataTransfer();]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{cb3f1b35-83ea-4573-9c08-f10beba298de}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	stParam :  REFERENCE TO ST_OCPP1_ClientParam; // Parameter to define the OCPP WebSocket connection.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+IF NOT __ISVALIDREF(stParam) THEN RETURN; END_IF
+
+FB_Init := Init(stParam);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Init" Id="{9af626be-6b34-0f57-249d-7cfe6a2e41b8}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_INPUT
+	stParam : REFERENCE TO ST_OCPP1_ClientParam; // Parameter to define the OCPP WebSocket connection.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[Init := _oClient.Init(stParam);
+
+_oClient.InitOptions(VAR_OCPP.stOptions);
+_oClient.InitSettings(VAR_OCPP.stSettings);
+_oClient.InitBootInfo(VAR_OCPP.stBootInfo);
+
+_fbConfiguration.InitStandard();
+_fbConfiguration.InitKeyValue(E_OCPP1_ConfigKey.HeartbeatInterval, UDINT_TO_STRING(TIME_TO_UDINT(_oClient.HeartbeatInterval)/1000), FALSE);]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="IsConnected" Id="{b1d0d473-89a0-4bf8-88e4-6342ef2cdda5}">
+      <Declaration><![CDATA[PROPERTY IsConnected : BOOL]]></Declaration>
+      <Get Name="Get" Id="{d786ea0b-b460-40bc-868b-962a5f312523}">
+        <Declaration><![CDATA[]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[IsConnected := _oClient.IsConnected;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="RecvChangeAvailability" Id="{f9649857-59d0-424d-b31f-c3c087945ff0}">
+      <Declaration><![CDATA[METHOD PRIVATE RecvChangeAvailability : BOOL
+VAR_STAT
+	hRecvId : T_OCPP_MessageId;
+	nConnectorId : UDINT; // The id of the connector for which availability needs to change.
+	eType : E_OCPP1_AvailabilityType; // This contains the type of availability change that the Charge Point should perform.
+	eStatus : E_OCPP1_AvailabilityStatus; // This indicates whether the Charge Point is able to perform the availability change.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Central System can request a Charge Point to change its availability
+// - A Charge Point is considered available ("operative") when it is charging or ready for charging
+// - A Charge Point is considered unavailable when it does not allow any charging
+IF _oClient.RecvChangeAvailability(hMessageId=> hRecvId, nConnectorId=> nConnectorId, eType=> eType) THEN
+	eStatus := E_OCPP1_AvailabilityStatus.Rejected;
+	IF nConnectorId = 0 THEN
+		CASE eType OF
+			E_OCPP1_AvailabilityType.Operative:
+				_bAvailable := TRUE;
+				eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+			E_OCPP1_AvailabilityType.Inoperative:
+				_bAvailable := FALSE;
+				eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+		END_CASE
+		FOR nConnectorId := 1 TO _nConnectorMax DO
+			IF _arrConnectors[nConnectorId] <> 0 THEN
+				_arrConnectors[nConnectorId]^.ChangeAvailability(eType:= eType, eStatus=> eStatus);
+			END_IF
+		END_FOR
+	ELSE
+		IF _arrConnectors[nConnectorId] <> 0 THEN
+			IF _arrConnectors[nConnectorId]^.ChangeAvailability(eType:= eType, eStatus=> eStatus) THEN
+		 		eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+			END_IF
+		END_IF
+	END_IF
+	_oClient.RespChangeAvailability(hMessageId:= hRecvId, eStatus:= eStatus);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvDataTransfer" Id="{4ca13627-41b5-0b69-01c8-d12b1965c95e}">
+      <Declaration><![CDATA[METHOD RecvDataTransfer : BOOL
+VAR_STAT
+	hRecvId : T_OCPP_MessageId;
+	sVendorId : STRING(255); 
+	sMessageId : STRING(63); 
+	sData : T_OCPP1_DataTransferData; 
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _oClient.RecvDataTransfer(hMessageId => hRecvId, sVendorId=> sVendorId, sMessageId=> sMessageId, sData := sData) THEN
+	IF sVendorId <> 'Beckhoff Automation' THEN
+		_oClient.RespDataTransfer(hRecvId, eStatus := E_OCPP1_DataTransferStatus.UnknownVendorId);
+	ELSIF sMessageId <> 'DataTransfer' THEN
+		_oClient.RespDataTransfer(hRecvId, eStatus := E_OCPP1_DataTransferStatus.UnknownMessageId);
+	ELSE
+		_oClient.RespDataTransfer(hRecvId, eStatus := E_OCPP1_DataTransferStatus.Accepted);
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvRemoteStartTransaction" Id="{e69c62fc-61c1-49b4-bcc7-6edb31ee783a}">
+      <Declaration><![CDATA[METHOD PRIVATE RecvRemoteStartTransaction : BOOL
+VAR
+	hRecvId : T_OCPP_MessageId;
+	nConnectorId : UDINT; // Number of the connector on which to start the transaction.
+	sIdTag : T_OCPP1_IdToken; // The identifier that Charge Point must use to start a transaction.
+	eStatus : E_OCPP1_RemoteStartStopStatus; // Status indicating whether Charge Point accepts the request to start a transaction.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Central System can request a Charge Point to start a transaction
+// - Enable a operator to help a driver that has problems starting a transaction
+// - Enable mobile apps to control charging transactions via the Central System
+IF _oClient.RecvRemoteStartTransaction(hMessageId=> hRecvId, nConnectorId=> nConnectorId, sIdToken=> sIdTag) THEN
+	eStatus := E_OCPP1_RemoteStartStopStatus.Rejected;
+	IF nConnectorId = 0 AND _nConnectorCnt = 1 THEN
+		nConnectorId := 1; // Workaround optional ConnectorId
+	END_IF
+	IF nConnectorId <> 0 THEN
+		IF _arrConnectors[nConnectorId] <> 0 THEN
+			IF _arrConnectors[nConnectorId]^.RemoteStartTransaction(sIdTag) THEN
+		 		eStatus := E_OCPP1_RemoteStartStopStatus.Accepted;
+			END_IF
+		END_IF
+	END_IF
+	_oClient.RespRemoteStartTransaction(hMessageId:= hRecvId, eStatus:= eStatus);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvRemoteStopTransaction" Id="{96295897-2ef1-455b-ab7a-777c7416388a}">
+      <Declaration><![CDATA[METHOD PRIVATE RecvRemoteStopTransaction : BOOL
+VAR
+	hRecvId : T_OCPP_MessageId;
+	nConnectorId : UDINT; // This identifies which connector of the Charge Point is used.
+	eStatus : E_OCPP1_RemoteStartStopStatus; // Status indicating whether Charge Point accepts the request to stop a transaction.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Central System can request a Charge Point to stop a transaction
+// - Enable a operator to help a driver that has problems stopping a transaction
+// - Enable mobile apps to control charging transactions via the Central System
+IF _oClient.RecvRemoteStopTransaction(hMessageId=> hRecvId, nConnectorId=> nConnectorId) THEN
+	eStatus := E_OCPP1_RemoteStartStopStatus.Rejected;
+	IF nConnectorId > 0 AND nConnectorId <= _nConnectorMax THEN
+		IF _arrConnectors[nConnectorId] <> 0 THEN
+			IF _arrConnectors[nConnectorId]^.RemoteStopTransaction() THEN
+				eStatus := E_OCPP1_RemoteStartStopStatus.Accepted;
+
+			END_IF
+		END_IF
+	END_IF
+	_oClient.RespRemoteStopTransaction(hMessageId:= hRecvId, eStatus:= eStatus);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvReserveCancel" Id="{7a7e0959-5c59-41a4-9b26-0dec89629811}">
+      <Declaration><![CDATA[METHOD RecvReserveCancel : BOOL
+VAR
+	hRecvId : T_OCPP_MessageId;
+	nReservationId : UDINT;
+	nConnectorId : UDINT;
+	eStatus : E_OCPP1_CancelReservationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _oClient.RecvCancelReservation(hMessageId => hRecvId, nReservationId => nReservationId) THEN
+	eStatus := E_OCPP1_CancelReservationStatus.Rejected;
+	FOR nConnectorId := 1 TO Param_OCPP.nConnectorCount DO
+		IF _arrConnectors[nConnectorId] <> 0 THEN
+			IF _arrConnectors[nConnectorId]^.ReserveCancel(nReservationId) THEN
+				eStatus := E_OCPP1_CancelReservationStatus.Accepted;
+				EXIT;
+			END_IF
+		END_IF
+	END_FOR
+	_oClient.RespCancelReservation(hRecvId, eStatus);	
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvReserveNow" Id="{da934e0f-9d71-425e-9fdb-ca3df4baa45a}">
+      <Declaration><![CDATA[METHOD PRIVATE RecvReserveNow : BOOL
+VAR
+	hRecvId : T_OCPP_MessageId;
+	nConnectorId : UDINT;
+	sIdTag: T_OCPP1_IdToken;
+	nReservationId: UDINT;
+	eStatus: E_OCPP1_ReservationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _oClient.RecvReserveNow(hMessageId => hRecvId, nConnectorId => nConnectorId, sIdTag => sIdTag, nReservationId => nReservationId) THEN
+	eStatus := E_OCPP1_ReservationStatus.Rejected;
+	IF nConnectorId <> 0 THEN
+		IF _arrConnectors[nConnectorId] <> 0 THEN
+			IF _arrConnectors[nConnectorId]^.Reserve(sIdTag, nReservationId) THEN
+				eStatus := E_OCPP1_ReservationStatus.Accepted;
+			ELSE
+				eStatus := E_OCPP1_ReservationStatus.Occupied;
+			END_IF
+		END_IF
+	END_IF
+	// TODO #183271
+	// _oClient.SendResponse(hMessageId:= hRecvId, E_OCPP1_Action.ReserveNow, SIZEOF(mRes), ADR(mRes));
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvReset" Id="{9b31e32d-1041-4f5c-9089-02b77b400455}">
+      <Declaration><![CDATA[METHOD RecvReset : BOOL
+VAR
+	hRecvId : T_OCPP_MessageId;
+	eType : E_OCPP1_ResetType;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Central System can request a Charge Point to reset itself
+// - At receipt of a soft reset, the Charge Point shall stop ongoing transactions
+// - At receipt of a hard reset the Charge Point shall restart (all) the hardware, not required to stop ongoing transaction
+IF _oClient.RecvReset(hMessageId=> hRecvId, eType=> eType) THEN
+		IF eType = E_OCPP1_ResetType.Soft THEN
+			_oClient.RespReset(hMessageId:= hRecvId, eStatus:= E_OCPP1_ResetStatus.Accepted);
+			_fbTcRestart(RESTART := TRUE);
+		ELSIF eType = E_OCPP1_ResetType.Hard THEN
+			_oClient.RespReset(hMessageId:= hRecvId, eStatus:= E_OCPP1_ResetStatus.Accepted);
+			_fbOsRestarT(START := TRUE);
+		ELSE
+			_oClient.RespReset(hMessageId:= hRecvId, eStatus:= E_OCPP1_ResetStatus.Rejected);
+		END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvTriggerMessage" Id="{de1cd328-b818-0cd6-01ac-47297aeb2420}">
+      <Declaration><![CDATA[METHOD RecvTriggerMessage : BOOL
+VAR_STAT
+	hRecvId : T_OCPP_MessageId;
+	eRequestedMessage: E_OCPP1_MessageTrigger;
+	nConnectorId : UDINT;
+	eStatus: E_OCPP1_TriggerMessageStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[hRecvId := '';
+IF _oClient.RecvTriggerMessage(hMessageId => hRecvId, eRequestedMessage => eRequestedMessage) THEN
+	nConnectorId := 1; // TODO #183270
+	eStatus := E_OCPP1_TriggerMessageStatus.Rejected;
+	IF nConnectorId <> 0 THEN
+		IF _arrConnectors[nConnectorId] <> 0 THEN
+			IF _arrConnectors[nConnectorId]^.TriggerMessage(eRequestedMessage) THEN
+		 		eStatus := E_OCPP1_TriggerMessageStatus.Accepted;
+			END_IF
+		END_IF
+	END_IF
+	_oClient.RespTriggerMessage(hRecvId, eStatus);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvUnlockConnector" Id="{355ecbf4-c4e7-4134-907e-2c5b977ef643}">
+      <Declaration><![CDATA[METHOD PRIVATE RecvUnlockConnector : BOOL
+VAR
+	hRecvId : T_OCPP_MessageId;
+	nConnectorId : UDINT; // This contains the identifier of the connector to be unlocked.
+	eStatus : E_OCPP1_UnlockStatus; // This indicates whether the Charge Point has unlocked the connector.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Central System can request a Charge Point to unlock a connector
+// - Help drivers that have problems unplugging their cable from the Charge Point in case of malfunction
+IF _oClient.RecvUnlockConnector(hMessageId=> hRecvId, nConnectorId=> nConnectorId) THEN
+	eStatus := E_OCPP1_UnlockStatus.UnlockFailed;
+	IF nConnectorId <> 0 THEN
+		IF _arrConnectors[nConnectorId] <> 0 THEN
+			IF _arrConnectors[nConnectorId]^.UnlockConnector() THEN
+		 		eStatus := E_OCPP1_UnlockStatus.Unlocked;
+			END_IF
+		END_IF
+	END_IF
+	_oClient.RespUnlockConnector(hMessageId:= hRecvId, eStatus:= eStatus);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendDataTransfer" Id="{c6b6fb90-3a84-0a7f-30f4-1aa6832c35f6}">
+      <Declaration><![CDATA[METHOD SendDataTransfer : BOOL
+VAR_STAT
+	bSend : BOOL;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bSend THEN
+	IF _oClient.SendDataTransfer('Beckhoff Automation', 'Hello World', '{"Hello":"World"}') THEN
+		bSend := FALSE;
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendStatusNotification" Id="{1a9aa73b-bdb2-4292-8bd1-87bd1312f84f}">
+      <Declaration><![CDATA[METHOD PRIVATE SendStatusNotification : BOOL
+VAR_INST
+	bSend : BOOL;
+	eSend : E_OCPP1_ChargePointStatus;
+	eLast : E_OCPP1_ChargePointStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Keep the charging station informed about the charger status
+// - Sends a notification to Server and inform about a status change or an error
+// - Memorize latest state and send if connected, otherwise keep it until reconnected
+IF NOT bSend AND eState <> eLast THEN
+	bSend := (eState <> E_OCPP1_ChargePointStatus.None);
+	eSend := eState;
+END_IF
+IF bSend AND _oClient.IsConnected THEN
+	IF _oClient.SendStatusNotification(0, E_OCPP1_ChargePointError.NoError, eState) THEN
+		bSend := FALSE;
+		eLast := eState;
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

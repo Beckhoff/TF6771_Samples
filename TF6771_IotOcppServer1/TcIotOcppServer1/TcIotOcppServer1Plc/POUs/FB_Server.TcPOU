@@ -1,0 +1,50 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_Server" Id="{1bf0250d-b6d0-4041-bd86-279312d44979}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Server
+VAR_OUTPUT
+	bValid : BOOL;
+END_VAR
+VAR
+	_fbServer : FB_OCPP1_Server(0);
+	// receive
+	hStationId : UDINT;
+	hMessageId : T_OCPP_MessageId;
+	eAction : E_OCPP1_Action;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="Execute" Id="{f894dc41-ef8a-47cb-8749-d4fe3d89ca14}">
+      <Declaration><![CDATA[METHOD Execute : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[bValid := _fbServer.bValid;
+IF NOT bValid THEN RETURN; END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{9659b0af-8b27-4926-8c1b-4473f332beef}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	stParam : REFERENCE TO ST_OCPP1_ServerParam;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+FB_Init := _fbServer.Init(stParam);]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="Server" Id="{759de8ec-c984-4874-8b4d-a9783312f1ca}">
+      <Declaration><![CDATA[PROPERTY Server : REFERENCE TO FB_OCPP1_Server]]></Declaration>
+      <Get Name="Get" Id="{77c772a7-e96f-4fae-be82-0f1b286a197d}">
+        <Declaration><![CDATA[]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Server REF= _fbServer;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+  </POU>
+</TcPlcObject>

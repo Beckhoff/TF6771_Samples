@@ -1,0 +1,131 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.7">
+  <POU Name="MAIN" Id="{2ff8fef2-f9c1-48de-9654-2e90ac28c90e}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	bValid : BOOL;
+	bInitialized : BOOL;
+	fbServer : FB_OCPP1_Server(VAR_OCPP.stServerParam);
+
+	nIdx : UDINT;
+	mStationData : REFERENCE TO ST_StationData;
+	// receive
+	bRecv : BOOL;
+	hStationId : UDINT;
+	eAction : E_OCPP1_Action;
+	hMessageId : T_OCPP_MessageId;
+	// status notification
+	nStatusConnectorId : UDINT;
+	eStatusNotificationError : E_OCPP1_ChargePointError;
+	eStatusNotificationStatus : E_OCPP1_ChargePointStatus;
+	// transactional
+	sIdTag: T_OCPP1_IdToken;
+	eAuthStatus : E_OCPP1_AuthorizationStatus;
+	nTransactionId : UDINT;
+	sDataTransferData : T_OCPP1_DataTransferData;
+	arrSampledValues : ARRAY[1..10] OF ST_OCPP1_SampledValue;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[bValid := fbServer.bValid;
+IF NOT bValid THEN RETURN; END_IF
+
+IF NOT bInitialized THEN
+	FOR nIdx := 1 TO VAR_OCPP.nStationListMax DO
+		IF VAR_OCPP.arrStationList[nIdx].sIdent <> '' THEN
+			fbServer.CreateStation(VAR_OCPP.arrStationList[nIdx].sIdent, VAR_OCPP.arrStationList[nIdx].sAuthHash, hStationId => VAR_OCPP.arrStationList[nIdx].hStationId);
+		END_IF
+	END_FOR
+	bInitialized := TRUE;
+END_IF
+
+IF fbServer.PollRequest(hStationId => hStationId, eAction => eAction, hMessageId => hMessageId) THEN
+	bRecv := FALSE;
+	FOR nIdx := 1 TO VAR_OCPP.nStationListMax DO
+		IF VAR_OCPP.arrStationList[nIdx].hStationId = hStationId THEN
+			mStationData REF= VAR_OCPP.arrStationList[nIdx];
+			bRecv := TRUE;
+			EXIT;
+		END_IF
+	END_FOR
+	IF NOT bRecv THEN
+		fbServer.RespError(hStationId, hMessageId, eAction, E_OCPP1_Error.GenericError);
+	ELSE
+		CASE eAction OF
+			E_OCPP1_Action.Heartbeat:
+				IF fbServer.RecvHeartbeat(hStationId, hMessageId => hMessageId) THEN
+					mStationData.nHeartbeats := mStationData.nHeartbeats + 1;
+					fbServer.RespHeartbeat(hStationId, hMessageId);
+				END_IF
+
+			E_OCPP1_Action.BootNotification:
+				IF fbServer.RecvBootNotification(hStationId, hMessageId=> hMessageId,
+					sModel=> mStationData.sModel, sVendor=> mStationData.sVendor,
+					sChargeBoxSerial=> mStationData.sChargeBoxSerial, sChargePointSerial=> mStationData.sChargePointSerial,
+					sFirmwareVersion=> mStationData.sFirmwareVersion, sMeterSerial=> mStationData.sMeterSerial,
+					sMeterType=> mStationData.sMeterType)
+				THEN
+					fbServer.RespBootNotification(hStationId, hMessageId, eStatus := E_OCPP1_RegistrationStatus.Accepted);
+				END_IF
+
+			E_OCPP1_Action.MeterValues:
+				IF fbServer.RecvMeterValue(hStationId, hMessageId => hMessageId, aSampleValues := arrSampledValues) THEN
+					fbServer.RespMeterValue(hStationId, hMessageId);
+				END_IF
+			E_OCPP1_Action.StatusNotification:
+				IF fbServer.RecvStatusNotification(hStationId, hMessageId => hMessageId,
+					nConnectorId => nStatusConnectorId, eError => eStatusNotificationError, eStatus => eStatusNotificationStatus)
+				THEN
+					CASE nStatusConnectorId OF
+						0: mStationData.eStationStatus := eStatusNotificationStatus;
+						1: mStationData.eConnector1Status := eStatusNotificationStatus;
+						2: mStationData.eConnector2Status := eStatusNotificationStatus;
+					END_CASE
+					fbServer.RespStatusNotification(hStationId, hMessageId);
+				END_IF
+			E_OCPP1_Action.Authorize:
+				IF fbServer.RecvAuthorize(hStationId, hMessageId => hMessageId, sIdTag => sIdTag) THEN
+					fbServer.RespAuthorize(hStationId, hMessageId, eStatus := F_AuthStatus(sIdTag));
+				END_IF
+			E_OCPP1_Action.StartTransaction:
+				IF fbServer.RecvStartTransaction(hStationId, hMessageId => hMessageId, sIdTag => sIdTag) THEN
+					eAuthStatus := F_AuthStatus(sIdTag);
+					IF eAuthStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+						nTransactionId := nTransactionId + 1;
+						fbServer.RespStartTransaction(hStationId, hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Accepted, nTransactionId := nTransactionId);
+					ELSE
+						fbServer.RespStartTransaction(hStationId, hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Invalid, nTransactionId := 0);
+					END_IF
+				END_IF
+			E_OCPP1_Action.StopTransaction:
+				IF fbServer.RecvStopTransaction(hStationId, hMessageId => hMessageId, sIdTag => sIdTag) THEN
+					eAuthStatus := F_AuthStatus(sIdTag);
+					IF eAuthStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+						fbServer.RespStopTransaction(hStationId, hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Accepted);
+					ELSE
+						fbServer.RespStopTransaction(hStationId, hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Invalid);
+					END_IF
+				END_IF
+			E_OCPP1_Action.DiagnosticsStatusNotification:
+				IF fbServer.RecvDiagnosticsStatusNotification(hStationId, hMessageId => hMessageId) THEN
+					fbServer.RespDiagnosticsStatusNotification(hStationId, hMessageId);
+				END_IF
+			E_OCPP1_Action.FirmwareStatusNotification:
+				IF fbServer.RecvFirmwareStatusNotification(hStationId, hMessageId => hMessageId) THEN
+					fbServer.RespFirmwareStatusNotification(hStationId, hMessageId);
+				END_IF
+			E_OCPP1_Action.DataTransfer:
+				IF fbServer.RecvDataTransfer(hStationId, hMessageId => hMessageId, sData := sDataTransferData) THEN
+					fbServer.RespDataTransfer(hStationId, hMessageId, eStatus := E_OCPP1_DataTransferStatus.Accepted);
+				END_IF
+			E_OCPP1_Action.SecurityEventNotification:
+				IF fbServer.RecvSecurityEventNotification(hStationId, hMessageId => hMessageId) THEN
+					fbServer.RespSecurityEventNotification(hStationId, hMessageId);
+				END_IF
+		ELSE
+			fbServer.RespError(hStationId, hMessageId, eAction, E_OCPP1_Error.NotImplemented);
+		END_CASE
+	END_IF
+END_IF]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

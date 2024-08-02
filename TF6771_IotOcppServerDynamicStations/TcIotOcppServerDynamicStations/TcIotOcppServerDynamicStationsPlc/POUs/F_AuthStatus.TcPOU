@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="F_AuthStatus" Id="{98b669ba-b5a5-48cb-8e44-25f1df10fd61}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION F_AuthStatus : E_OCPP1_AuthorizationStatus
+VAR_IN_OUT
+	sIdTag: T_OCPP1_IdToken;
+END_VAR
+VAR
+	nIdx : UDINT;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[F_AuthStatus := E_OCPP1_AuthorizationStatus.Invalid;
+FOR nIdx := 1 TO VAR_OCPP.nAuthListMax DO
+	IF VAR_OCPP.arrAuthList[nIdx].sIdTag = sIdTag THEN
+		F_AuthStatus := VAR_OCPP.arrAuthList[nIdx].stIdTagInfo.eStatus;
+		RETURN;
+	END_IF
+END_FOR]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

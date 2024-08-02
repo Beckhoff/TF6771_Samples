@@ -1,0 +1,88 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_SampleValue" Id="{2cd90e26-043f-47b3-98cd-b93495117be0}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_SampleValue
+VAR
+	_nSampleId : UDINT;
+	_mValue : ST_OCPP1_SampledValue;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="FB_Init" Id="{3c9632c4-bbca-4958-b6dd-fb783ba8cad7}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	fbMeterValue : REFERENCE TO FB_MeterValue;
+	eContext : E_OCPP1_ReadingContext := E_OCPP1_ReadingContext.SamplePeriodic; // Optional. Type of detail value: start, end or sample.
+	eMeasurand : E_OCPP1_Measurand := E_OCPP1_Measurand.None; // Optional. Type of measurement.
+	ePhase : E_OCPP1_Phase := E_OCPP1_Phase.None; // Optional. indicates how the measured value is to be interpreted.
+	eLocation : E_OCPP1_Location := E_OCPP1_Location.None; // Optional. Location of measurement.
+	eUnit : E_OCPP1_Unit := E_OCPP1_Unit.None; // Optional. Unit of the value.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+IF NOT __ISVALIDREF(fbMeterValue) THEN RETURN; END_IF
+
+FB_Init := Init(fbMeterValue, eContext, eMeasurand, ePhase, eLocation, eUnit);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="GetSampled" Id="{157567f1-9acd-475d-ae02-fc3a2d633901}">
+      <Declaration><![CDATA[METHOD INTERNAL GetSampled : BOOL
+VAR_IN_OUT
+	mSampledValue : ST_OCPP1_SampledValue;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[mSampledValue := _mValue;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Init" Id="{9c0726ea-87df-4097-b0b0-599286d4c57c}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_INPUT
+	fbMeterValue : REFERENCE TO FB_MeterValue;
+	eContext : E_OCPP1_ReadingContext := E_OCPP1_ReadingContext.SamplePeriodic; // Optional. Type of detail value: start, end or sample.
+	eMeasurand : E_OCPP1_Measurand := E_OCPP1_Measurand.None; // Optional. Type of measurement.
+	ePhase : E_OCPP1_Phase := E_OCPP1_Phase.None; // Optional. indicates how the measured value is to be interpreted.
+	eLocation : E_OCPP1_Location := E_OCPP1_Location.None; // Optional. Location of measurement.
+	eUnit : E_OCPP1_Unit := E_OCPP1_Unit.None; // Optional. Unit of the value.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_mValue.fValue := 0.0;
+_mValue.eContext := eContext;
+_mValue.eMeasurand := eMeasurand;
+_mValue.ePhase := ePhase;
+_mValue.eLocation := eLocation;
+_mValue.eUnit := eUnit;
+
+Init := fbMeterValue.AddSample(_nSampleId, THIS);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SetValue" Id="{a38f85b0-5a19-441a-ab4d-eee4dbcd4636}">
+      <Declaration><![CDATA[METHOD SetValue : BOOL
+VAR_INPUT
+	fValue : LREAL;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_mValue.fValue := fValue;]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="Value" Id="{63c643a0-4976-43d6-9a30-ba5d216c31f3}">
+      <Declaration><![CDATA[PROPERTY Value : LREAL]]></Declaration>
+      <Get Name="Get" Id="{c9ea068e-0f89-4bea-bd1a-aaf1ad49ffc7}">
+        <Declaration><![CDATA[]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Value := _mValue.fValue;]]></ST>
+        </Implementation>
+      </Get>
+      <Set Name="Set" Id="{ee3b5f7d-166c-488f-a061-21955f7f57f9}">
+        <Declaration><![CDATA[]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[_mValue.fValue := Value;]]></ST>
+        </Implementation>
+      </Set>
+    </Property>
+  </POU>
+</TcPlcObject>

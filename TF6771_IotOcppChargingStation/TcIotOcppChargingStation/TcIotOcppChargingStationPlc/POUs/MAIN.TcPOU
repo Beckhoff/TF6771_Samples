@@ -1,0 +1,29 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="MAIN" Id="{7172c737-2578-4477-ab73-05d4e13a5684}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	// Station/Connectors
+	fbStation : FB_Station(stParam := VAR_OCPP.stClientParam);
+	fbConnector1 : FB_Connector(nConnectorId := 1, fbStation := fbStation);
+	fbConnector2 : FB_Connector(nConnectorId := 2, fbStation := fbStation);
+	// MeterValues/SampledValues
+	fbStationMeter : FB_StationMeter(fbStation := fbStation);
+	fbConnector1Meter : FB_ConnectorMeter(nConnectorId := 1, fbStation := fbStation);
+	fbConnector2Meter : FB_ConnectorMeter(nConnectorId := 2, fbStation := fbStation);
+	// Simulation
+	fbConnector1Sim : FB_ConnectorSim;
+	fbConnector2Sim : FB_ConnectorSim;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbStation.Execute();
+
+fbStationMeter.Execute(fbStation := fbStation);
+fbConnector1Meter.Execute(fbConnector := fbConnector1, fCurrentOffered := VAR_OCPP.fCurrentOffered1);
+fbConnector2Meter.Execute(fbConnector := fbConnector2, fCurrentOffered := VAR_OCPP.fCurrentOffered2);
+
+fbConnector1Sim(fbConnector := fbConnector1, fCurrentOffered := VAR_OCPP.fCurrentOffered1);
+fbConnector2Sim(fbConnector := fbConnector2, fCurrentOffered := VAR_OCPP.fCurrentOffered2);]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

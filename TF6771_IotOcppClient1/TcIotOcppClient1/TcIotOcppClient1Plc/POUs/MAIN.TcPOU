@@ -1,0 +1,310 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="MAIN" Id="{c472cbd1-f2c3-493c-a973-8278ee533c79}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	bInit : BOOL;
+	// manual operation
+	bStart : BOOL;
+	bStop : BOOL;
+	bReset : BOOL;
+	// client
+	fbClient : FB_OCPP1_Client(VAR_OCPP.stClientParam);
+	// state machine
+	eState : E_OCPP1_SampleState;
+	bError : BOOL;
+	eErrorState : E_OCPP1_SampleState;
+	eChargeStatus : E_OCPP1_ChargePointStatus;
+	eChargeStatusSend : E_OCPP1_ChargePointStatus;
+	bChargeStatusSend : BOOL;
+	eAuthStatus : E_OCPP1_AuthorizationStatus;
+	stIdTagInfo : ST_OCPP1_IdTagInfo; // information about authorization status
+	// automatic operation
+	bLocalCharge : BOOL; // request to charge from local
+	bRemoteCharge : BOOL; // request to charge from remote
+	sIdTag : T_OCPP1_IdToken; // id of a user tag
+	nConnectorId : UDINT; // id of a used connector
+	eStopReason : E_OCPP1_Reason; // reason to stop charging
+	// remote operation
+	sStartIdTag : T_OCPP1_IdToken; // id tag of a transaction to be started
+	nStartConnectorId : UDINT; // connector of transaction to be started
+	nStopConnectorId : UDINT; // id of connector to be stopped
+	nUnlockConnectorId : UDINT; // id of connector to be unlocked
+	eResetType : E_OCPP1_ResetType; // requested reset type
+	nAvailConnectorId : UDINT; // connector requested to change availability
+	eAvailabilityType : E_OCPP1_AvailabilityType; // requested availability type
+	hRecvId : T_OCPP_MessageId;
+END_VAR
+VAR PERSISTENT
+	nEnergyMeter : UDINT; // [Wh] meter value of charged energy
+	fEnergyMeterIntegrator : REAL; // [Wh] meter value of charged energy
+END_VAR
+VAR CONSTANT
+	nTestConnectorId : UDINT := 1;
+	sTestIdTag : T_OCPP1_IdToken := '1234abcd';
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF NOT bInit THEN
+	fbClient.InitOptions(VAR_OCPP.stOptions);
+	fbClient.InitSettings(VAR_OCPP.stSettings);
+	fbClient.InitBootInfo(VAR_OCPP.stBootInfo);
+	fbClient.Execute(TRUE);
+	bInit := TRUE;
+END_IF
+
+// ================================================================================
+// Manual operation of "Charge Point"
+
+IF bStart THEN // start local charging
+	bStart := FALSE;
+	bLocalCharge := TRUE;
+	eState := E_OCPP1_SampleState.Authorize;
+	eChargeStatus := E_OCPP1_ChargePointStatus.Preparing;
+	sIdTag := sTestIdTag;
+	nConnectorId := nTestConnectorId;
+END_IF
+
+IF bStop THEN // stop local charging
+	bStop := FALSE;
+	bLocalCharge := FALSE;
+	eState := E_OCPP1_SampleState.Stop;
+	eChargeStatus := E_OCPP1_ChargePointStatus.Finishing;
+	sIdTag := '';
+	eStopReason := E_OCPP1_Reason.Local;
+END_IF
+
+IF bReset THEN // manual reset of state machine
+	bReset := FALSE;
+	eState := E_OCPP1_SampleState.Init;
+END_IF
+
+// ================================================================================
+// State machine of "Charge Point"
+
+CASE eState OF
+	E_OCPP1_SampleState.Init:
+		// Initializing by notifying the availability
+		eChargeStatus := E_OCPP1_ChargePointStatus.Available;
+		IF NOT fbClient.bBusy THEN
+			IF NOT fbClient.bError THEN
+				eState := E_OCPP1_SampleState.Idle;
+			END_IF
+		END_IF
+
+	E_OCPP1_SampleState.Idle:
+		// Await any operation
+
+	E_OCPP1_SampleState.Authorize:
+		// Authorize the operation
+		// - Before the owner of a vehicle can start/stop charging, the Charge Point has to authorize the operation
+		IF fbClient.SendAuthorize(
+				sIdTag := sIdTag,
+				eStatus => stIdTagInfo.eStatus)
+		THEN
+			IF NOT fbClient.bError THEN
+				IF stIdTagInfo.eStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+					IF bLocalCharge OR bRemoteCharge THEN
+						eState := E_OCPP1_SampleState.Start;
+						eChargeStatus := E_OCPP1_ChargePointStatus.Preparing;
+					ELSE
+						eState := E_OCPP1_SampleState.Idle;
+					END_IF
+				ELSE
+					bError := TRUE;
+					eErrorState := eState;
+					eState := E_OCPP1_SampleState.Error;
+				END_IF
+			ELSE
+				bError := TRUE;
+				eErrorState := eState;
+				eState := E_OCPP1_SampleState.Error;
+			END_IF
+		END_IF
+
+	E_OCPP1_SampleState.Start:
+		// Start transaction
+		// - inform about a transaction that has been started
+		IF fbClient.SendStartTransaction(
+				sIdTag := sIdTag,
+				nConnectorId := nConnectorId,
+				nMeterStart := nEnergyMeter,
+				nReservationId := 0,
+				eStatus=> eAuthStatus)
+		THEN
+			IF NOT fbClient.bError THEN
+				IF eAuthStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+					IF bLocalCharge OR bRemoteCharge THEN
+						eState := E_OCPP1_SampleState.Charging;
+						eChargeStatus := E_OCPP1_ChargePointStatus.Charging;
+					ELSE
+						eState := E_OCPP1_SampleState.Stop;
+						eChargeStatus := E_OCPP1_ChargePointStatus.Finishing;
+					END_IF
+				ELSE
+					bError := TRUE;
+					eErrorState := eState;
+					eState := E_OCPP1_SampleState.Error;
+				END_IF
+			ELSE
+				bError := TRUE;
+				eErrorState := eState;
+				eState := E_OCPP1_SampleState.Error;
+			END_IF
+		END_IF
+
+	E_OCPP1_SampleState.Charging:
+		// Ongoing transaction
+		fEnergyMeterIntegrator := fEnergyMeterIntegrator + 0.01 * 8000; // charging with 8kW at 10ms cycle time
+		nEnergyMeter := LREAL_TO_UDINT(fEnergyMeterIntegrator);
+		// TODO SendMeterValues?
+		IF  NOT bLocalCharge AND NOT bRemoteCharge THEN
+			eState := E_OCPP1_SampleState.Stop;
+			eStopReason := E_OCPP1_Reason.EmergencyStop;
+			eChargeStatus := E_OCPP1_ChargePointStatus.Finishing;
+		END_IF
+
+	E_OCPP1_SampleState.Stop:
+		// Stop transaction
+		// - inform about a transaction that has been stopped
+		IF fbClient.SendStopTransaction(
+				sIdTag := sIdTag,
+				nConnectorId := nConnectorId,
+				nMeterStop := nEnergyMeter,
+				eReason := eStopReason,
+				eStatus=> eAuthStatus)
+		THEN
+			IF NOT fbClient.bError THEN
+				eState := E_OCPP1_SampleState.Idle;
+				eChargeStatus := E_OCPP1_ChargePointStatus.Available;
+			ELSE
+				bError := TRUE;
+				eErrorState := eState;
+				eState := E_OCPP1_SampleState.Error;
+			END_IF
+		END_IF
+
+	E_OCPP1_SampleState.Unavailable:
+		// Station is unavailable (e.g. requested by management)
+		eChargeStatus := E_OCPP1_ChargePointStatus.Unavailable;
+
+	E_OCPP1_SampleState.Error:
+		// Any error has occured
+		eChargeStatus := E_OCPP1_ChargePointStatus.Faulted;
+		IF NOT bError THEN
+			eState := E_OCPP1_SampleState.Init;
+		END_IF
+
+ELSE
+	bError := TRUE;
+	eErrorState := eState;
+	eState := E_OCPP1_SampleState.Error;
+END_CASE
+
+// ================================================================================
+// Receive requests from Central System
+
+// Central System can request a Charge Point to start a transaction
+// - Enable a operator to help a driver that has problems starting a transaction
+// - Enable mobile apps to control charging transactions via the Central System
+IF fbClient.RecvRemoteStartTransaction(hMessageId=> hRecvId, nConnectorId=> nStartConnectorId, sIdToken=> sStartIdTag) THEN
+	IF nStartConnectorId = nConnectorId THEN
+		bRemoteCharge := TRUE;
+		sIdTag := sStartIdTag;
+		eState := E_OCPP1_SampleState.Start;
+		eChargeStatus := E_OCPP1_ChargePointStatus.Preparing;
+		fbClient.RespRemoteStartTransaction(hMessageId:= hRecvId, eStatus:= E_OCPP1_RemoteStartStopStatus.Accepted);
+	ELSE
+		fbClient.RespRemoteStartTransaction(hMessageId:= hRecvId, eStatus:= E_OCPP1_RemoteStartStopStatus.Rejected);
+	END_IF
+END_IF
+
+// Central System can request a Charge Point to stop a transaction
+// - Enable a operator to help a driver that has problems stopping a transaction
+// - Enable mobile apps to control charging transactions via the Central System
+IF fbClient.RecvRemoteStopTransaction(hMessageId=> hRecvId, nConnectorId=> nStopConnectorId) THEN
+	IF nStopConnectorId = nConnectorId THEN
+		bRemoteCharge := FALSE;
+		eState := E_OCPP1_SampleState.Stop;
+		eChargeStatus := E_OCPP1_ChargePointStatus.Finishing;
+		eStopReason := E_OCPP1_Reason.Remote;
+		fbClient.RespRemoteStopTransaction(hMessageId:= hRecvId, eStatus:= E_OCPP1_RemoteStartStopStatus.Accepted);
+	ELSE
+		fbClient.RespRemoteStopTransaction(hMessageId:= hRecvId, eStatus:= E_OCPP1_RemoteStartStopStatus.Rejected);
+	END_IF
+END_IF
+
+// Central System can request a Charge Point to unlock a connector
+// - Help drivers that have problems unplugging their cable from the Charge Point in case of malfunction
+IF fbClient.RecvUnlockConnector(hMessageId=> hRecvId, nConnectorId=> nUnlockConnectorId) THEN
+	IF eState <> E_OCPP1_SampleState.Idle AND nUnlockConnectorId = nConnectorId THEN
+		bRemoteCharge := FALSE;
+		eState := E_OCPP1_SampleState.Stop;
+		eStopReason := E_OCPP1_Reason.UnlockCommand;
+		fbClient.RespUnlockConnector(hMessageId:= hRecvId, eStatus:= E_OCPP1_UnlockStatus.Unlocked);
+	ELSE
+		fbClient.RespUnlockConnector(hMessageId:= hRecvId, eStatus:= E_OCPP1_UnlockStatus.UnlockFailed);
+	END_IF
+END_IF
+
+// Central System can request a Charge Point to change its availability
+// - A Charge Point is considered available ("operative") when it is charging or ready for charging
+// - A Charge Point is considered unavailable when it does not allow any charging
+IF fbClient.RecvChangeAvailability(hMessageId=> hRecvId, nConnectorId=> nAvailConnectorId, eType=> eAvailabilityType) THEN
+	IF nAvailConnectorId <> nConnectorId THEN
+		fbClient.RespChangeAvailability(hMessageId:= hRecvId, eStatus:= E_OCPP1_AvailabilityStatus.Rejected);
+	ELSIF eAvailabilityType = E_OCPP1_AvailabilityType.Operative THEN
+		IF eState = E_OCPP1_SampleState.Unavailable OR eState = E_OCPP1_SampleState.Error THEN
+			bError := FALSE;
+			eState := E_OCPP1_SampleState.Init;
+		END_IF
+		fbClient.RespChangeAvailability(hMessageId:= hRecvId, eStatus:= E_OCPP1_AvailabilityStatus.Accepted);
+	ELSIF eAvailabilityType = E_OCPP1_AvailabilityType.Inoperative THEN
+		IF eState = E_OCPP1_SampleState.Start OR eState = E_OCPP1_SampleState.Charging OR eState = E_OCPP1_SampleState.Stop THEN
+			fbClient.RespChangeAvailability(hMessageId:= hRecvId, eStatus:= E_OCPP1_AvailabilityStatus.Scheduled);
+		ELSE
+			eState := E_OCPP1_SampleState.Unavailable;
+			fbClient.RespChangeAvailability(hMessageId:= hRecvId, eStatus:= E_OCPP1_AvailabilityStatus.Accepted);
+		END_IF
+	END_IF
+END_IF
+
+// Central System can request a Charge Point to reset itself
+// - At receipt of a soft reset, the Charge Point shall stop ongoing transactions
+// - At receipt of a hard reset the Charge Point shall restart (all) the hardware, not required to stop ongoing transaction
+IF fbClient.RecvReset(hMessageId=> hRecvId, eType=> eResetType) THEN
+	IF eState = E_OCPP1_SampleState.Charging THEN // Soft reset while charging ==> stop and accept
+		bRemoteCharge := FALSE;
+		eState := E_OCPP1_SampleState.Stop;
+		eStopReason := E_OCPP1_Reason.Reboot;
+		fbClient.RespReset(hMessageId:= hRecvId, eStatus:= E_OCPP1_ResetStatus.Accepted);
+	ELSIF eResetType = E_OCPP1_ResetType.Soft THEN // Soft reset to restart ==> accept
+		bError := FALSE;
+		eState := E_OCPP1_SampleState.Init;
+		fbClient.RespReset(hMessageId:= hRecvId, eStatus:= E_OCPP1_ResetStatus.Accepted);
+	ELSIF eResetType = E_OCPP1_ResetType.Hard THEN // Reset hard is not supported ==> reject
+		fbClient.RespReset(hMessageId:= hRecvId, eStatus:= E_OCPP1_ResetStatus.Rejected);
+	END_IF
+END_IF
+
+// ================================================================================
+// Send status of Charge Point
+
+// Keep the charging station informed about the charge point status
+// - Sends a notification to the Central System to inform about a status change or an error within the Charge Point
+IF NOT bChargeStatusSend AND eChargeStatus <> eChargeStatusSend THEN
+	bChargeStatusSend := eChargeStatus <> E_OCPP1_ChargePointStatus.None;
+	eChargeStatusSend := eChargeStatus;
+END_IF
+IF bChargeStatusSend AND fbClient.IsConnected THEN
+	IF fbClient.SendStatusNotification(nTestConnectorId, E_OCPP1_ChargePointError.NoError, eChargeStatusSend) THEN
+		bChargeStatusSend := FALSE;
+		IF fbClient.bError THEN
+			bError := TRUE;
+			eErrorState := eState;
+			eState := E_OCPP1_SampleState.Error;
+		END_IF
+	END_IF
+END_IF]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

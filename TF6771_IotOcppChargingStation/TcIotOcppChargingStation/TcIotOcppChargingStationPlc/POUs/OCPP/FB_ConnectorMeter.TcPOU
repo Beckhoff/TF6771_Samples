@@ -1,0 +1,111 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_ConnectorMeter" Id="{3378b730-9819-0e0d-15b7-0a488d04e2b4}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_ConnectorMeter
+VAR
+	tonSample : TON;
+	fbMeter : FB_MeterValue(0, 0);
+	fbSampleEnergy : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSampleCurrentL1 : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSampleCurrentL2 : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSampleCurrentL3 : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSamplePower : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="Execute" Id="{60ef2d39-e028-00b7-0e35-1dddb15152d0}">
+      <Declaration><![CDATA[METHOD Execute : BOOL
+VAR_INPUT
+	fbConnector : REFERENCE TO FB_Connector;
+	fCurrentOffered : REAL; // [A]
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[tonSample(
+	IN := fbConnector.bCharging,
+	PT := VAR_Param.tSamplePeriodic);
+
+fbMeter.Execute();
+
+IF tonSample.Q AND fbConnector.Available THEN
+	tonSample(IN := FALSE);
+	fbSampleEnergy.SetValue(fbConnector.nEnergyMeter);
+	fbSampleCurrentL1.SetValue(fCurrentOffered);
+	fbSampleCurrentL2.SetValue(fCurrentOffered);
+	fbSampleCurrentL3.SetValue(fCurrentOffered);
+	fbSamplePower.SetValue(fCurrentOffered * 3.0 * 230.0 * 0.001);
+	fbMeter.Send();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{a5a453d2-b609-0b45-1672-baafa08c00d5}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	nConnectorId : UDINT;
+	fbStation : REFERENCE TO FB_Station;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+IF NOT __ISVALIDREF(fbStation) THEN RETURN; END_IF
+
+FB_Init := Init(nConnectorId, fbStation);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Init" Id="{c25e3a30-13dd-03b8-0326-774d4f427b37}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_INPUT
+	nConnectorId : UDINT;
+	fbStation : REFERENCE TO FB_Station;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fbMeter.Init(
+	nConnectorId:= nConnectorId,
+	fbStation:= fbStation);
+
+fbSampleEnergy.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SamplePeriodic,
+	eMeasurand:= E_OCPP1_Measurand.EnergyActiveImportRegister,
+	ePhase:= E_OCPP1_Phase.None,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.Wh);
+
+fbSampleCurrentL1.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SamplePeriodic,
+	eMeasurand:= E_OCPP1_Measurand.CurrentImport,
+	ePhase:= E_OCPP1_Phase.L1,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.A);
+
+fbSampleCurrentL2.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SamplePeriodic,
+	eMeasurand:= E_OCPP1_Measurand.CurrentImport,
+	ePhase:= E_OCPP1_Phase.L2,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.A);
+
+fbSampleCurrentL3.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SamplePeriodic,
+	eMeasurand:= E_OCPP1_Measurand.CurrentImport,
+	ePhase:= E_OCPP1_Phase.L3,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.A);
+
+fbSamplePower.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SamplePeriodic,
+	eMeasurand:= E_OCPP1_Measurand.PowerActiveImport,
+	ePhase:= E_OCPP1_Phase.None,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.kW);]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,282 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_SampledValueMeasurands" Id="{7ff61c4c-8c53-4152-b3e6-d5ef7a80d8a1}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_SampledValueMeasurands
+VAR_OUTPUT
+	nUpdateTimestamp : ULINT; // Last timestamp for measured value(s).
+	sUpdateTimestamp : STRING(23); // Last timestamp for measured value(s).
+	fCurrentExport : REAL := -1.0; // [A] Instantaneous current flow from EV
+	fCurrentImport : REAL := -1.0; // [A] Instantaneous current flow to EV
+	fCurrentImportL1 : REAL := -1.0; // [A] Instantaneous current flow to EV
+	fCurrentImportL2 : REAL := -1.0; // [A] Instantaneous current flow to EV
+	fCurrentImportL3 : REAL := -1.0; // [A] Instantaneous current flow to EV
+	fCurrentOffered : REAL := -1.0; // [A] Maximum current offered to EV
+	fEnergyActiveExportRegister : REAL := -1.0; // [kWh] Numerical value read from the "active electrical energy" (Wh or kWh) register of the (most authoritative) electrical meter measuring energy exported (to the grid).
+	fEnergyActiveImportRegister : REAL := -1.0; // [kWh] Numerical value read from the "active electrical energy" (Wh or kWh) register of the (most authoritative) electrical meter measuring energy imported (from the grid supply).
+	fEnergyReactiveExportRegister : REAL := -1.0; // [kVARh] Numerical value read from the "reactive electrical energy" (VARh or kVARh) register of the (most authoritative) electrical meter measuring energy exported (to the grid).
+	fEnergyReactiveImportRegister : REAL := -1.0; // [kVARh] Numerical value read from the "reactive electrical energy" (VARh or kVARh) register of the (most authoritative) electrical meter measuring energy imported (from the grid supply).
+	fEnergyActiveExportInterval : REAL := -1.0; // [kWh] Absolute amount of "active electrical energy" (Wh or kWh) exported (to the grid) during an associated time "interval".
+	fEnergyActiveImportInterval : REAL := -1.0; // [kWh] Absolute amount of "active electrical energy" (Wh or kWh) imported(from the grid supply) during an associated time "interval".
+	fEnergyReactiveExportInterval : REAL := -1.0; // [kVARh] Absolute amount of "reactive electrical energy" (VARh or kVARh) exported (to the grid) during an associated time "interval".
+	fEnergyReactiveImportInterval : REAL := -1.0; // [kVARh] Absolute amount of "reactive electrical energy" (VARh or kVARh) imported (from the grid supply) during an associated time "interval".
+	fFrequency : REAL := -1.0; // [Hz] Instantaneous reading of powerline frequency.
+	fPowerActiveExport : REAL := -1.0; // [kW] Instantaneous active power exported by EV. (W or kW)
+	fPowerActiveImport : REAL := -1.0; // [kW] Instantaneous active power imported by EV. (W or kW)
+	fPowerOffered : REAL := -1.0; // [kW] Maximum power offered to EV
+	fPowerFactor : REAL := -1.0; // Instantaneous power factor of total energy flow
+	fPowerReactiveExport : REAL := -1.0; // [VAR] Instantaneous reactive power exported by EV. (var or kvar)
+	fPowerReactiveImport : REAL := -1.0; // [VAR] Instantaneous reactive power imported by EV. (var or kvar)
+	fFanSpeed : REAL := -1.0; // [r/m] Fan speed in RPM
+	fStateOfCharge : REAL := -1.0; // [%] State of charge of charging vehicle in percentage
+	fTemperature : REAL := -1.0; // [°C] Temperature reading inside Charge Point.
+	fVoltage : REAL := -1.0; // [V] Instantaneous AC RMS supply voltage
+	fVoltageL1N : REAL := -1.0; // [V] Instantaneous AC RMS supply voltage
+	fVoltageL2N : REAL := -1.0; // [V] Instantaneous AC RMS supply voltage
+	fVoltageL3N : REAL := -1.0; // [V] Instantaneous AC RMS supply voltage
+END_VAR
+VAR
+	mErrorValue : ST_OCPP1_SampledValue;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="Update" Id="{67ecca49-0a63-4acb-8094-43024ea97acf}">
+      <Declaration><![CDATA[METHOD Update : BOOL
+VAR_IN_OUT CONSTANT
+	arrSampleValues : ARRAY[*] OF ST_OCPP1_SampledValue;
+END_VAR
+VAR
+	nIdx : DINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[FOR nIdx := LOWER_BOUND(arrSampleValues,1) TO UPPER_BOUND(arrSampleValues,1) DO
+	IF arrSampleValues[nIdx].nTimestamp > nUpdateTimestamp THEN
+		nUpdateTimestamp := arrSampleValues[nIdx].nTimestamp;
+		sUpdateTimestamp := DCTIME64_TO_STRING(FILETIME64_TO_DCTIME64(nUpdateTimestamp));
+	END_IF
+    UpdateRawValue(arrSampleValues[nIdx]);
+END_FOR]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="UpdateRawValue" Id="{15be4a5b-455c-45cb-ac7d-b702fc43263f}">
+      <Declaration><![CDATA[METHOD UpdateRawValue : BOOL
+VAR_IN_OUT CONSTANT
+	mValue : ST_OCPP1_SampledValue;
+END_VAR
+VAR
+	fValue : REAL;
+END_VAR
+VAR CONSTANT
+	cfOneKilo : REAL := 0.001;
+	cfOneThird : REAL := 1.0 / 3.0;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fValue := LREAL_TO_REAL(mValue.fValue);
+IF mValue.ePhase = E_OCPP1_Phase.None THEN
+	CASE mValue.eMeasurand OF
+		E_OCPP1_Measurand.CurrentExport:
+			IF mValue.eUnit = E_OCPP1_Unit.A THEN
+				fCurrentExport := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.CurrentImport:
+			IF mValue.eUnit = E_OCPP1_Unit.A THEN
+				fCurrentImport := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.CurrentOffered:
+			IF mValue.eUnit = E_OCPP1_Unit.A THEN
+				fCurrentOffered := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyActiveExportRegister:
+			IF mValue.eUnit = E_OCPP1_Unit.Wh THEN
+				fEnergyActiveExportRegister := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kWh THEN
+				fEnergyActiveExportRegister := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyActiveImportRegister:
+			IF mValue.eUnit = E_OCPP1_Unit.Wh THEN
+				fEnergyActiveImportRegister := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kWh THEN
+				fEnergyActiveImportRegister := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyReactiveExportRegister:
+			IF mValue.eUnit = E_OCPP1_Unit.VARh THEN
+				fEnergyReactiveExportRegister := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kVARh THEN
+				fEnergyReactiveExportRegister := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyReactiveImportRegister:
+			IF mValue.eUnit = E_OCPP1_Unit.VARh THEN
+				fEnergyReactiveImportRegister := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kVARh THEN
+				fEnergyReactiveImportRegister := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyActiveExportInterval:
+			IF mValue.eUnit = E_OCPP1_Unit.Wh THEN
+				fEnergyActiveExportInterval := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kWh THEN
+				fEnergyActiveExportInterval := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyActiveImportInterval:
+			IF mValue.eUnit = E_OCPP1_Unit.Wh THEN
+				fEnergyActiveImportInterval := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kWh THEN
+				fEnergyActiveImportInterval := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyReactiveExportInterval:
+			IF mValue.eUnit = E_OCPP1_Unit.VARh THEN
+				fEnergyReactiveExportInterval := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kVARh THEN
+				fEnergyReactiveExportInterval := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.EnergyReactiveImportInterval:
+			IF mValue.eUnit = E_OCPP1_Unit.VARh THEN
+				fEnergyReactiveImportInterval := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kVARh THEN
+				fEnergyReactiveImportInterval := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.Frequency:
+			IF mValue.eUnit = E_OCPP1_Unit.None THEN
+				fFrequency := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.PowerActiveExport:
+			IF mValue.eUnit = E_OCPP1_Unit.W THEN
+				fPowerActiveExport := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kW THEN
+				fPowerActiveExport := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.PowerActiveImport:
+			IF mValue.eUnit = E_OCPP1_Unit.W THEN
+				fPowerActiveImport := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kW THEN
+				fPowerActiveImport := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.PowerOffered:
+			IF mValue.eUnit = E_OCPP1_Unit.W THEN
+				fPowerOffered := fValue * cfOneKilo;
+			ELSIF mValue.eUnit = E_OCPP1_Unit.kW THEN
+				fPowerOffered := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.PowerFactor:
+			IF mValue.eUnit = E_OCPP1_Unit.None THEN
+				fPowerFactor := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.PowerReactiveExport:
+			IF mValue.eUnit = E_OCPP1_Unit.Vars THEN
+				fPowerReactiveExport := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.PowerReactiveImport:
+			IF mValue.eUnit = E_OCPP1_Unit.Vars THEN
+				fPowerReactiveImport := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.RPM:
+			IF mValue.eUnit = E_OCPP1_Unit.None THEN
+				fFanSpeed := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.SoC:
+			IF mValue.eUnit = E_OCPP1_Unit.Percent THEN
+				fStateOfCharge := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.Temperature:
+			IF mValue.eUnit = E_OCPP1_Unit.Celsius THEN
+				fTemperature := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.Voltage:
+			IF mValue.eUnit = E_OCPP1_Unit.V THEN
+				fVoltage := fValue;
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+	ELSE
+		mErrorValue := mValue;
+	END_CASE
+ELSE
+	CASE mValue.eMeasurand OF
+		E_OCPP1_Measurand.CurrentImport:
+			IF mValue.eUnit = E_OCPP1_Unit.A THEN
+				IF mValue.ePhase = E_OCPP1_Phase.None THEN
+					fCurrentImport := fValue;
+				ELSE
+					CASE mValue.ePhase OF
+						E_OCPP1_Phase.L1: fCurrentImportL1 := fValue;
+						E_OCPP1_Phase.L2: fCurrentImportL2 := fValue;
+						E_OCPP1_Phase.L3: fCurrentImportL3 := fValue;
+					ELSE
+						mErrorValue := mValue;
+					END_CASE
+					IF fCurrentImportL1 >= 0 AND fCurrentImportL2 >= 0 AND fCurrentImportL3 >= 0 THEN
+						fCurrentImport := (fCurrentImportL1 + fCurrentImportL2 + fCurrentImportL3);
+					END_IF
+				END_IF
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+		E_OCPP1_Measurand.Voltage:
+			IF mValue.eUnit = E_OCPP1_Unit.V THEN
+				IF mValue.ePhase = E_OCPP1_Phase.None THEN
+					fVoltage := fValue;
+				ELSE
+					CASE mValue.ePhase OF
+						E_OCPP1_Phase.L1N: fVoltageL1N := fValue;
+						E_OCPP1_Phase.L2N: fVoltageL2N := fValue;
+						E_OCPP1_Phase.L3N: fVoltageL3N := fValue;
+					ELSE
+						mErrorValue := mValue;
+					END_CASE
+					IF fVoltageL1N >= 0 AND fVoltageL2N >= 0 AND fVoltageL3N >= 0 THEN
+						fVoltage := (fVoltageL1N + fVoltageL2N + fVoltageL3N) * cfOneThird;
+					END_IF
+				END_IF
+			ELSE
+				mErrorValue := mValue;
+			END_IF
+	ELSE
+		mErrorValue := mValue;
+	END_CASE
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

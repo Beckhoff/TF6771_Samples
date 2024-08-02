@@ -1,0 +1,114 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_MeterValue" Id="{d35ccf6e-0069-468c-b0cf-682648f88e82}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_MeterValue
+VAR
+	// id
+	_nConnectorId : UDINT;
+	// client
+	_bSend : BOOL;
+	_pClient : POINTER TO FB_OCPP1_Client;
+	// sampled values
+	_nSampleCnt : UDINT;
+	_arrSamples : ARRAY[1..Param_OCPP.nSampledValuesMax] OF POINTER TO FB_SampleValue;
+	_arrValues : ARRAY[1..Param_OCPP.nSampledValuesMax] OF ST_OCPP1_SampledValue;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="AddSample" Id="{8dd926d0-0d97-42fc-8303-7486916836ba}">
+      <Declaration><![CDATA[METHOD INTERNAL AddSample : BOOL
+VAR_INPUT
+	nSampleId : REFERENCE TO UDINT;
+	pSample : POINTER TO FB_SampleValue;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF pSample = 0 THEN
+	RETURN; // invalid pointer!
+END_IF
+
+IF _nSampleCnt >= Param_OCPP.nSampledValuesMax THEN
+	RETURN; // maximum amount of samples!
+END_IF
+
+_nSampleCnt := _nSampleCnt + 1;
+nSampleId := _nSampleCnt;
+
+_arrSamples[nSampleId] := pSample;
+
+AddSample := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Execute" Id="{f3a36843-f819-46d8-a073-283c40115835}">
+      <Declaration><![CDATA[METHOD Execute : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _bSend AND _pClient <> 0 THEN
+	IF _pClient^.SendMeterValue(_nConnectorId, _nSampleCnt, _arrValues) THEN
+		_bSend := FALSE;
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{bf885af2-5f29-4a08-8d24-b7a1e16c3667}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	nConnectorId : UDINT;
+	fbStation : REFERENCE TO FB_Station;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+IF NOT __ISVALIDREF(fbStation) THEN RETURN; END_IF
+
+FB_Init := Init(nConnectorId, fbStation);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Init" Id="{a7164515-e095-4fd3-8ddc-8f6fa0edd0f2}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_INPUT
+	nConnectorId : UDINT;
+END_VAR
+VAR_IN_OUT CONSTANT
+	fbStation : FB_Station;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_nConnectorId := nConnectorId;
+
+IF __ISVALIDREF(fbStation) THEN
+	_pClient := fbStation.Client;
+END_IF
+
+Init := (_pClient <> 0);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Send" Id="{8fb32839-75a0-4cf9-a687-be4aad69c44d}">
+      <Declaration><![CDATA[METHOD Send : BOOL
+VAR
+	nIdx : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _pClient = 0 THEN
+	RETURN; // invalid pointer to client!
+END_IF
+
+IF NOT _bSend THEN
+	FOR nIdx := 1 TO _nSampleCnt DO
+		IF _arrSamples[nIdx] <> 0 THEN
+			_arrSamples[nIdx]^.GetSampled(_arrValues[nIdx]);
+		END_IF
+	END_FOR
+	_bSend := TRUE;
+END_IF
+
+IF _pClient <> 0 THEN
+	Send := _pClient^.SendMeterValue(_nConnectorId, _nSampleCnt, _arrValues);
+	IF Send THEN _bSend := FALSE; END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

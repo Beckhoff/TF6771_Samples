@@ -1,0 +1,754 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_Connector" Id="{6627297b-656a-4531-8b4c-d8effbc2b408}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Connector
+VAR_INPUT
+	bOperative : BOOL; // Operative and ready for energy delivery
+	sIdTag : T_OCPP1_IdToken; // Token of id tag
+
+	bAuth : BOOL; // Request to authorize identity
+	bStart : BOOL; // Request to start a transaction
+	bStop : BOOL; // Request to stop a transaction
+
+	bConnected : BOOL; // Plug is inserted
+	bLocked : BOOL; // Cable is locked
+	bOffering : BOOL; // Supply is offering energy
+	bCharging : BOOL; // Vehicle is taking energy
+	nEnergyMeter : UDINT; // Accumulated meter value in Wh of the connector
+END_VAR
+VAR_OUTPUT
+	fChargeLimit : REAL; // [A] Charging rate limit of current offered on every phace of connector
+	bLock : BOOL; // Request to lock cable (on supply and/or vehicle)
+	bSupply : BOOL; // Request to supply energy to vehicle
+	bBusy : BOOL;
+	bError : BOOL;
+	eState : E_OCPP1_ChargePointStatus := E_OCPP1_ChargePointStatus.Available;
+	eErrorAction : E_OCPP1_Action := E_OCPP1_Action.None;
+	eErrorState : E_OCPP1_ChargePointStatus := E_OCPP1_ChargePointStatus.None;
+	eAuthStatus : E_OCPP1_AuthorizationStatus := E_OCPP1_AuthorizationStatus.None;
+	eStopReason : E_OCPP1_Reason := E_OCPP1_Reason.None; // Reason why the transaction was stopped.
+END_VAR
+VAR
+	// id
+	_nConnectorId : UDINT;
+	// client
+	_pClient : POINTER TO FB_OCPP1_Client;
+	// memory
+	_sIdTag : T_OCPP1_IdToken;
+	// trigger
+	_trigAuth : R_TRIG;
+	_bAuth : BOOL;
+	_trigLocalStart : R_TRIG;
+	_bStart : BOOL;
+	_trigLocalStop : R_TRIG;
+	_bStop : BOOL;
+	// transaction
+	_bTransActive : BOOL;
+	// reservation
+	_bReserved : BOOL;
+	_sReserveId : T_OCPP1_IdToken;
+	_nReserveId : UDINT;
+END_VAR
+VAR PERSISTENT
+	_bAvailable : BOOL := TRUE;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Property Name="Available" Id="{507057d9-933d-4c3f-a3e0-703d808e0e72}">
+      <Declaration><![CDATA[PROPERTY Available : BOOL]]></Declaration>
+      <Get Name="Get" Id="{c611db5d-ee68-49a2-94fb-a40cd4ef14d0}">
+        <Declaration><![CDATA[]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Available := _pClient <> 0 AND _pClient^.IsConnected
+	AND eState <> E_OCPP1_ChargePointStatus.Unavailable
+	AND eState <> E_OCPP1_ChargePointStatus.Faulted;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="ChangeAvailability" Id="{d48611b1-86ff-414d-9378-699f2f369b6b}">
+      <Declaration><![CDATA[METHOD INTERNAL ChangeAvailability : BOOL
+VAR_INPUT
+	eType : E_OCPP1_AvailabilityType; // This contains the type of availability change that the Charge Point should perform.
+END_VAR
+VAR_OUTPUT
+	eStatus : E_OCPP1_AvailabilityStatus; // This indicates whether the Charge Point is able to perform the availability change.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE eType OF
+	E_OCPP1_AvailabilityType.Operative:
+		_bAvailable := TRUE;
+		eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+		ChangeAvailability := TRUE;
+	E_OCPP1_AvailabilityType.Inoperative:
+		_bAvailable := FALSE;
+		CASE eState OF
+			E_OCPP1_ChargePointStatus.Available:
+				eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+			E_OCPP1_ChargePointStatus.Preparing:
+				eStatus := E_OCPP1_AvailabilityStatus.Scheduled;
+			E_OCPP1_ChargePointStatus.Charging:
+				eStatus := E_OCPP1_AvailabilityStatus.Scheduled;
+			E_OCPP1_ChargePointStatus.SuspendedEVSE:
+				eStatus := E_OCPP1_AvailabilityStatus.Scheduled;
+			E_OCPP1_ChargePointStatus.SuspendedEV:
+				eStatus := E_OCPP1_AvailabilityStatus.Scheduled;
+			E_OCPP1_ChargePointStatus.Finishing:
+				eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+			E_OCPP1_ChargePointStatus.Reserved:
+				eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+			E_OCPP1_ChargePointStatus.Unavailable:
+				eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+			E_OCPP1_ChargePointStatus.Faulted:
+				eStatus := E_OCPP1_AvailabilityStatus.Accepted;
+		END_CASE
+		ChangeAvailability := TRUE;
+ELSE
+	eStatus := E_OCPP1_AvailabilityStatus.Rejected;
+	ChangeAvailability := FALSE;
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Execute" Id="{d2da6212-2d26-45ff-aff6-ada2869bbb28}">
+      <Declaration><![CDATA[METHOD Execute : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _pClient <> 0 THEN
+	bBusy := _pClient^.bBusy;
+	IF _pClient^.bError AND NOT bError THEN
+		bError := _pClient^.bError;
+		eErrorAction := _pClient^.eErrorAction;
+		eErrorState := eState;
+		eState := E_OCPP1_ChargePointStatus.Faulted;
+	END_IF
+ELSE
+	bError := TRUE;
+	eErrorState := E_OCPP1_ChargePointStatus.None;
+	RETURN;
+END_IF
+
+// ================================================================================
+// Trigger
+
+_trigAuth(CLK := bAuth);
+IF _trigAuth.Q THEN
+	eAuthStatus := E_OCPP1_AuthorizationStatus.None;
+	_bAuth := TRUE;
+	_sIdTag := sIdTag;
+END_IF
+
+_trigLocalStart(CLK := bStart AND bConnected);
+IF _trigLocalStart.Q AND NOT _bStart
+	AND_THEN (eState = E_OCPP1_ChargePointStatus.Available
+		OR eState = E_OCPP1_ChargePointStatus.Preparing
+		OR eState = E_OCPP1_ChargePointStatus.Finishing)
+THEN
+	IF eAuthStatus <> E_OCPP1_AuthorizationStatus.Accepted THEN
+		eAuthStatus := E_OCPP1_AuthorizationStatus.None;
+		_bAuth := TRUE;
+		_sIdTag := sIdTag;
+	END_IF
+	_bStart := TRUE;
+END_IF
+
+_trigLocalStop(CLK := bStop AND bSupply);
+IF _trigLocalStop.Q AND NOT _bStop
+	AND_THEN (eState = E_OCPP1_ChargePointStatus.Charging
+		OR eState = E_OCPP1_ChargePointStatus.SuspendedEVSE
+		OR eState = E_OCPP1_ChargePointStatus.SuspendedEV)
+THEN
+	IF eAuthStatus <> E_OCPP1_AuthorizationStatus.Accepted THEN
+		eAuthStatus := E_OCPP1_AuthorizationStatus.None;
+		_bAuth := TRUE;
+		_sIdTag := sIdTag;
+	END_IF
+	eStopReason := E_OCPP1_Reason.Local;
+	_bStop := TRUE;
+END_IF
+
+// ================================================================================
+// State machine of connector
+
+CASE eState OF
+	E_OCPP1_ChargePointStatus.Available: // When a connector becomes available for a new user. (Operative)
+
+		// Transition A2 ==> Preparing
+		// Transition A3, A4, A5 ==> Preparing and then following transitions
+		// - Usage is initiated (e.g. insert plug, bay occupancy detection, present idTag, push start button, receipt of a RemoteStartTransaction request)
+		IF bConnected THEN
+			eState := E_OCPP1_ChargePointStatus.Preparing;
+		END_IF
+
+		// Transition A7 ==> Reserved
+		// - A ReserveNow message is received that reserves the connector
+		IF _bReserved THEN
+			eState := E_OCPP1_ChargePointStatus.Reserved;
+		END_IF
+
+		// Transition A8 ==> Unavailable
+		// - A ChangeAvailability message is received that sets the connector to Unavailable
+		IF NOT _bAvailable THEN
+			eState := E_OCPP1_ChargePointStatus.Unavailable;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.Preparing: // When a connector becomes no longer available for a new user but there is no ongoing transaction. (Operative)
+
+		// Transition B1 ==> Available
+		// - Intended usage is ended (e.g. plug removed, bay no longer occupied, second presentation of idTag, time out on expected user action)
+		IF NOT bConnected THEN
+			eState := E_OCPP1_ChargePointStatus.Available;
+		END_IF
+
+		// Connected cable => lock cable
+		IF _bStart AND bConnected THEN
+			// Authorize the operation
+			// - Before the owner of a vehicle can start/stop charging, the Charge Point has to authorize the operation
+			IF eAuthStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+				bLock := TRUE;
+			ELSIF eAuthStatus <> E_OCPP1_AuthorizationStatus.None THEN
+				bLock := FALSE;
+				eState := E_OCPP1_ChargePointStatus.Finishing;
+			END_IF
+		ELSE
+			bLock := FALSE;
+		END_IF
+
+		// Locked cable => supply energy
+		IF bLock AND bLocked THEN
+			// Authorize the operation
+			// - Before the owner of a vehicle can start/stop charging, the Charge Point has to authorize the operation
+			IF eAuthStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+				bSupply := TRUE;
+			ELSIF eAuthStatus <> E_OCPP1_AuthorizationStatus.None THEN
+				bSupply := FALSE;
+				eState := E_OCPP1_ChargePointStatus.Finishing;
+			END_IF
+		ELSE
+			bSupply := FALSE;
+		END_IF
+
+		IF bSupply THEN
+			// Transition B5 ==> SuspendedEVSE
+			// - All prerequisites for charging are met but EVSE does not allow charging
+			IF NOT bOffering THEN
+				eState := E_OCPP1_ChargePointStatus.SuspendedEVSE;
+				_bStart := FALSE;
+			// Transition B4 ==> SuspendedEV
+			// - All prerequisites for charging are met but EV does not start charging
+			ELSIF NOT bCharging THEN
+				eState := E_OCPP1_ChargePointStatus.SuspendedEV;
+				_bStart := FALSE;
+			// Transition B3 ==> Charging
+			// - All prerequisites for charging are met and charging process starts
+			ELSE // bOffering AND bCharging
+				eState := E_OCPP1_ChargePointStatus.Charging;
+				_bStart := FALSE;
+			END_IF
+		END_IF
+
+		// Transition B6 ==> Finishing
+		// - Timed out. Usage was initiated (e.g. insert plug, bay occupancy detection), but idTag not presented within timeout.
+		// ==> TODO
+
+	E_OCPP1_ChargePointStatus.Charging: // When the contactor of a connector closes, allowing the vehicle to charge. (Operative)
+
+		// Transition C1 ==> Available
+		// - Charging session ends while no user action is required (e.g. fixed cable was removed on EV side)
+		IF NOT bConnected THEN
+			bLock := FALSE;
+			bSupply := FALSE;
+			eState := E_OCPP1_ChargePointStatus.Available;
+			eStopReason := E_OCPP1_Reason.EVDisconnected;
+			_bStop := TRUE;
+		END_IF
+
+		// Transition C4 ==> SuspendedEV
+		// - Charging stops upon EV request (e.g. S2 is opened)
+		IF NOT bCharging THEN
+			eState := E_OCPP1_ChargePointStatus.SuspendedEV;
+		END_IF
+
+		// Transition C5 ==> SuspendedEVSE
+		// - Charging stops upon EVSE request (e.g. smart charging restriction, transaction is invalidated by the AuthorizationStatus in a StartTransaction response)
+		IF NOT bOffering THEN
+			eState := E_OCPP1_ChargePointStatus.SuspendedEVSE;
+		END_IF
+
+		// Transition C6 ==> Finishing
+		// Transition C8 ==> Finishing and then Unavailable
+		// - Transaction is stopped by user or a Remote Stop Transaction message and further user action is required (e.g. remove cable, leave parking bay)
+		IF _bStop THEN
+			bSupply := FALSE;
+			eState := E_OCPP1_ChargePointStatus.Finishing;
+		END_IF
+		IF eAuthStatus <> E_OCPP1_AuthorizationStatus.Accepted THEN
+			bSupply := FALSE;
+			eState := E_OCPP1_ChargePointStatus.Finishing;
+			eStopReason := E_OCPP1_Reason.DeAuthorized;
+			_bStop := TRUE;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.SuspendedEVSE: // When the EV is connected to the EVSE but the EVSE is not offering energy to the EV. (Operative)
+
+		// Transition E1 ==> Available
+		// - Charging session ends while no user action is required
+		IF NOT bConnected THEN
+			bLock := FALSE;
+			bSupply := FALSE;
+			eState := E_OCPP1_ChargePointStatus.Available;
+			eStopReason := E_OCPP1_Reason.EVDisconnected;
+			_bStop := TRUE;
+		END_IF
+
+		// Transition E3 ==> Charging
+		// - Charging resumes because the EVSE restriction is lifted
+		IF bOffering AND bCharging THEN
+			eState := E_OCPP1_ChargePointStatus.Charging;
+		END_IF
+
+		// Transition E4 ==> SuspendedEV
+		// - The EVSE restriction is lifted but the EV does not start charging
+		IF bOffering AND NOT bCharging THEN
+			eState := E_OCPP1_ChargePointStatus.SuspendedEV;
+		END_IF
+
+		// Transition E6 ==> Finishing
+		// Transition E8 ==> Finishing and then Unavailable
+		// - Transaction is stopped and further user action is required
+		IF _bStop THEN
+			bSupply := FALSE;
+			eState := E_OCPP1_ChargePointStatus.Finishing;
+		END_IF
+		IF eAuthStatus <> E_OCPP1_AuthorizationStatus.Accepted THEN
+			eState := E_OCPP1_ChargePointStatus.Finishing;
+			bSupply := FALSE;
+			eStopReason := E_OCPP1_Reason.DeAuthorized;
+			_bStop := TRUE;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.SuspendedEV: // When the EV is connected to the EVSE and the EVSE is offering energy but the EV is not taking any energy. (Operative)
+
+		// Transition D1 ==> Available
+		// - Charging session ends while no user action is required
+		IF NOT bConnected THEN
+			bLock := FALSE;
+			bSupply := FALSE;
+			eState := E_OCPP1_ChargePointStatus.Available;
+			eStopReason := E_OCPP1_Reason.EVDisconnected;
+			_bStop := TRUE;
+		END_IF
+
+		// Transition D3 ==> Charging
+		// - Charging resumes upon request of the EV (e.g. S2 is closed)
+		IF bOffering AND bCharging THEN
+			eState := E_OCPP1_ChargePointStatus.Charging;
+		END_IF
+
+		// Transition D5 ==> SuspendedEVSE
+		// - Charging is suspended by EVSE (e.g. due to a smart charging restriction)
+		IF NOT bOffering THEN
+			eState := E_OCPP1_ChargePointStatus.SuspendedEVSE;
+		END_IF
+
+		// Transition D6 ==> Finishing
+		// Transition D8 ==> Finishing and then Unavailable
+		// - Transaction is stopped and further user action is required
+		IF _bStop THEN
+			bSupply := FALSE;
+			eState := E_OCPP1_ChargePointStatus.Finishing;
+		END_IF
+		IF eAuthStatus <> E_OCPP1_AuthorizationStatus.Accepted THEN
+			eState := E_OCPP1_ChargePointStatus.Finishing;
+			bSupply := FALSE;
+			eStopReason := E_OCPP1_Reason.DeAuthorized;
+			_bStop := TRUE;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.Finishing: // When a Transaction has stopped at a connector, but the connector is not yet available for a new user. (Operative)
+
+		IF _bStop AND NOT bOffering THEN
+			bLock := FALSE;
+			_bStop := FALSE;
+		END_IF
+
+		// Transition F1 ==> Available
+		// - All user actions completed
+		IF NOT bConnected THEN
+			eState := E_OCPP1_ChargePointStatus.Available;
+		END_IF
+
+		// Transition F2 ==> Preparing
+		// - User restart charging session (e.g. reconnects cable, presents idTag again), thereby creating a new Transaction
+		IF _bStart THEN
+			// Authorize the operation
+			// - Before the owner of a vehicle can start/stop charging, the Charge Point has to authorize the operation
+			IF eAuthStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+				eState := E_OCPP1_ChargePointStatus.Preparing;
+			ELSE
+				_bStart := FALSE;
+			END_IF
+		END_IF
+
+		// Transition F8 ==> Unavailable
+		// - All user actions completed and the connector is scheduled to become Unavailable
+		IF NOT _bAvailable THEN
+			eState := E_OCPP1_ChargePointStatus.Unavailable;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.Reserved: // When a Connector becomes reserved as a result of a Reserve Now command. (Operative)
+
+		// Transition G1 ==> Available
+		// - Reservation expires or a CancelReservation message is received
+		IF NOT _bReserved THEN
+			eState := E_OCPP1_ChargePointStatus.Available;
+		END_IF
+
+		// Transition G2 ==> Preparing
+		// - Reservation identity is presented
+		IF _bAuth AND _sIdTag = _sReserveId THEN
+			eState := E_OCPP1_ChargePointStatus.Preparing;
+			eAuthStatus := E_OCPP1_AuthorizationStatus.Accepted;
+			_bStart := TRUE;
+		END_IF
+
+		// Transition G8 ==> Unavailable
+		// - Reservation expires or a Cancel Reservation message is received and the connector is scheduled to become Unavailable
+		// ==> TODO
+
+	E_OCPP1_ChargePointStatus.Unavailable: // When a Connector becomes unavailable as the result of a ChangeAvailability command or an event upon which the Charge Point transitions to unavailable at its discretion. (Inoperative)
+
+		// Transition H1 ==> Available
+		// Transition H2, H3, H4, H4 ==> Available and then following transitions
+		// - Connector is set Available by a ChangeAvailability message
+		IF _bAvailable THEN
+			eState := E_OCPP1_ChargePointStatus.Available;
+		END_IF
+
+	E_OCPP1_ChargePointStatus.Faulted: //When a Charge Point or connector has reported an error and is not available for energy delivery . (Inoperative)
+
+		bSupply := FALSE;
+		bLock := (bOffering OR bCharging);
+
+		// Transition I1-8
+		// - Fault is resolved and status returns to the pre-fault state
+		IF NOT (bConnected OR bLocked OR bOffering OR bCharging)  THEN
+			eState := E_OCPP1_ChargePointStatus.Available;
+			_bAuth := FALSE;
+			_bStart := FALSE;
+			_bStop := FALSE;
+		END_IF
+
+ELSE
+	bError := TRUE;
+	eErrorState := eState;
+	eState := E_OCPP1_ChargePointStatus.Faulted;
+END_CASE
+
+// ================================================================================
+// Send status of connector
+SendAuthorize();
+SendStartTransaction();
+SendStopTransaction();
+SendStatusNotification();]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{1adffe75-9dbf-4fb2-9038-bed48c47e391}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	nConnectorId : UDINT;
+	fbStation : REFERENCE TO FB_Station;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+IF NOT __ISVALIDREF(fbStation) THEN RETURN; END_IF
+
+FB_Init := Init(nConnectorId, fbStation);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Init" Id="{c1494f3c-7fdf-487b-878b-88875c794a07}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_INPUT
+	nConnectorId : UDINT;
+	fbStation : REFERENCE TO FB_Station;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_nConnectorId := nConnectorId;
+_pClient := fbStation.Client;
+
+Init := fbStation.AddConnector(_nConnectorId, THIS);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RemoteStartTransaction" Id="{32c30929-c318-4a5d-ad61-15f696064eab}">
+      <Declaration><![CDATA[METHOD INTERNAL RemoteStartTransaction : BOOL
+VAR_INPUT
+	sIdTag : T_OCPP1_IdToken; // The identifier that Charge Point must use to start a transaction.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_bStart := TRUE;
+_sIdTag := sIdTag;
+
+// identifier has already been authorized
+eAuthStatus := E_OCPP1_AuthorizationStatus.Accepted;
+RemoteStartTransaction := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RemoteStopTransaction" Id="{10a9e669-ad86-4f0a-96b6-43631496dd87}">
+      <Declaration><![CDATA[METHOD INTERNAL RemoteStopTransaction : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[RemoteStopTransaction := StopTransaction(E_OCPP1_Reason.Remote);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Reserve" Id="{6d31203a-59b8-4254-832c-8c4313d5bd74}">
+      <Declaration><![CDATA[METHOD Reserve : BOOL
+VAR_IN_OUT CONSTANT
+	sIdTag : T_OCPP1_IdToken;
+	nReservationId : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF eState = E_OCPP1_ChargePointStatus.Available THEN
+	_bReserved := TRUE;
+	_sReserveId := sIdTag;
+	_nReserveId := nReservationId;
+	Reserve := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReserveCancel" Id="{0bd825c7-0747-401f-883b-9cda91f5079f}">
+      <Declaration><![CDATA[METHOD ReserveCancel : BOOL
+VAR_IN_OUT CONSTANT
+	nReservationId : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _bReserved AND _nReserveId = nReservationId THEN
+	_bReserved := FALSE;
+	_nReserveId := 0;
+	_sReserveId := '';
+	ReserveCancel := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendAuthorize" Id="{f9297bc3-f930-45ff-9ded-b272f9324aa5}">
+      <Declaration><![CDATA[METHOD PRIVATE SendAuthorize : BOOL
+VAR_INST
+	eStatus : E_OCPP1_AuthorizationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Authorize the operation
+// - Before the owner of a vehicle can start/stop charging, the Charge Point has to authorize the operation
+IF _bAuth AND _sIdTag <> '' THEN
+	IF _pClient^.SendAuthorize(sIdTag := _sIdTag, eStatus=> eStatus) THEN
+		_bAuth := FALSE;
+		IF NOT _pClient^.bError THEN
+			eAuthStatus := eStatus;
+		ELSE
+			bError := TRUE;
+			eErrorState := eState;
+			eState := E_OCPP1_ChargePointStatus.Faulted;
+			eAuthStatus := E_OCPP1_AuthorizationStatus.Invalid;
+		END_IF
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendHeartbeat" Id="{59ca5520-81d9-4015-8837-1ce56df0f14d}">
+      <Declaration><![CDATA[METHOD SendHeartbeat : BOOL
+VAR_STAT
+	hMessageId : UDINT;
+(*
+	mRequest : ST_OCPP1_HeartbeatReq;
+	mResponse: ST_OCPP1_HeartbeatRes;
+*)
+	nState: INT;
+	eError: E_OCPP1_Error;
+END_VAR
+VAR CONSTANT
+	eAction : E_OCPP1_Action := E_OCPP1_Action.Heartbeat;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[(*
+CASE nState OF
+	0:
+		IF _pClient^.SendRequest(hMessageId:= hMessageId, eAction:= eAction, nRequest:= SIZEOF(mRequest), pRequest:= ADR(mRequest)) THEN
+			nState:=10;
+		END_IF
+	10:
+		IF _pClient^.RecvResponse(hMessageId:=hMessageId , eAction:=eAction , eError:= eError, nResponse:=SIZEOF(mResponse) , pResponse:= ADR(mResponse)) THEN
+			nState := 20;
+		ELSIF _pClient^.bError THEN
+			nState := 20;
+		END_IF
+	20: 
+		SendHeartbeat := TRUE;
+		nState := 0; 
+END_CASE
+*)]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendStartTransaction" Id="{790268be-53c6-4395-8bb6-8038ae111922}">
+      <Declaration><![CDATA[METHOD PRIVATE SendStartTransaction : BOOL
+VAR_INST
+	trigSend : R_TRIG;
+	bSend : BOOL;
+	eStatus : E_OCPP1_AuthorizationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Start transaction
+// - inform about a transaction that has been started
+trigSend(CLK := _bStart);
+IF trigSend.Q AND NOT _bTransActive THEN
+	bSend := TRUE;
+	_bTransActive := TRUE;
+END_IF
+IF bSend THEN
+	IF _pClient^.SendStartTransaction(
+			sIdTag := _sIdTag,
+			nConnectorId := _nConnectorId,
+			nMeterStart := nEnergyMeter,
+			nReservationId := _nReserveId,
+			eStatus=> eStatus)
+	THEN
+		bSend := FALSE;
+		IF NOT _pClient^.bError THEN
+			eAuthStatus := eStatus; // TODO Abort a running transaction?
+		ELSE
+			bError := TRUE;
+			eErrorState := eState;
+			eState := E_OCPP1_ChargePointStatus.Faulted;
+			eAuthStatus := E_OCPP1_AuthorizationStatus.Invalid;
+		END_IF
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendStatusNotification" Id="{ff851806-4a65-4631-9eeb-84f1048a5cec}">
+      <Declaration><![CDATA[METHOD PRIVATE SendStatusNotification : BOOL
+VAR_INST
+	bSend : BOOL;
+	eSend : E_OCPP1_ChargePointStatus;
+	eLast : E_OCPP1_ChargePointStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Keep the charging station informed about the connector status
+// - Sends a notification to Server and inform about a status change or an error
+// - Memorize latest state and send if connected, otherwise keep it until reconnected
+IF NOT bSend AND eState <> eLast THEN
+	bSend := (eState <> E_OCPP1_ChargePointStatus.None);
+	eSend := eState;
+END_IF
+IF bSend AND _pClient^.IsConnected THEN
+	IF _pClient^.SendStatusNotification(_nConnectorId, E_OCPP1_ChargePointError.NoError, eSend) THEN
+		bSend := FALSE;
+		eLast := eState;
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendStopTransaction" Id="{254b94c5-ca22-43a6-af9a-1b03eaf88bde}">
+      <Declaration><![CDATA[METHOD PRIVATE SendStopTransaction : BOOL
+VAR_INST
+	trigSend : R_TRIG;
+	bSend : BOOL;
+	eStatus : E_OCPP1_AuthorizationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Stop transaction
+// - inform about a transaction that has been stopped
+trigSend(CLK :=  _bStop);
+IF trigSend.Q AND _bTransActive THEN
+	bSend := TRUE;
+	_bTransActive := FALSE;
+END_IF
+IF bSend THEN
+	IF _pClient^.SendStopTransaction(
+			sIdTag := _sIdTag,
+			nConnectorId := _nConnectorId,
+			nMeterStop := nEnergyMeter,
+			eReason := eStopReason,
+			eStatus=> eStatus)
+	THEN
+		bSend := FALSE;
+		IF NOT _pClient^.bError THEN
+			eAuthStatus := eStatus;
+		ELSE
+			bError := TRUE;
+			eErrorState := eState;
+			eState := E_OCPP1_ChargePointStatus.Faulted;
+			eAuthStatus := E_OCPP1_AuthorizationStatus.Invalid;
+		END_IF
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SetChargingSchedulePeriod" Id="{76ed619c-ef2a-4102-adf0-f31508c0fb0a}">
+      <Declaration><![CDATA[METHOD SetChargingSchedulePeriod : BOOL
+VAR_IN_OUT
+	mPeriod : ST_OCPP1_ChargingSchedulePeriod;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fChargeLimit := mPeriod.fLimit;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StopTransaction" Id="{c7db2542-6f51-4073-bb04-ee890f3cebef}">
+      <Declaration><![CDATA[METHOD INTERNAL StopTransaction : BOOL
+VAR_INPUT
+	eReason : E_OCPP1_Reason; // This contains the reason why the transaction was stopped.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[eStopReason := eReason;
+_bStart := FALSE;
+_bStop := TRUE;
+
+StopTransaction := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="TriggerMessage" Id="{46e8d64e-079f-08a5-18e3-e7626c1cb39e}">
+      <Declaration><![CDATA[METHOD PUBLIC TriggerMessage : BOOL
+VAR_INPUT
+	eRequestedMessage : E_OCPP1_MessageTrigger;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE eRequestedMessage OF
+	//E_OCPP1_MessageTrigger.BootNotification:
+	//E_OCPP1_MessageTrigger.DiagnosticsStatusNotification:
+	//E_OCPP1_MessageTrigger.FirmwareStatusNotification:
+	E_OCPP1_MessageTrigger.Heartbeat:
+		TriggerMessage := SendHeartbeat();
+	//E_OCPP1_MessageTrigger.MeterValues:
+
+	E_OCPP1_MessageTrigger.StatusNotification:
+		TriggerMessage := _pClient^.SendStatusNotification(_nConnectorId, E_OCPP1_ChargePointError.NoError, eState);
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="UnlockConnector" Id="{9f60c6da-23f2-44d7-a60a-6be2a9425130}">
+      <Declaration><![CDATA[METHOD INTERNAL UnlockConnector : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE eState OF
+	E_OCPP1_ChargePointStatus.Preparing:
+		StopTransaction(E_OCPP1_Reason.UnlockCommand);
+		UnlockConnector := TRUE;
+	E_OCPP1_ChargePointStatus.Charging:
+		StopTransaction(E_OCPP1_Reason.UnlockCommand);
+		UnlockConnector := TRUE;
+	E_OCPP1_ChargePointStatus.SuspendedEVSE:
+		StopTransaction(E_OCPP1_Reason.UnlockCommand);
+		UnlockConnector := TRUE;
+	E_OCPP1_ChargePointStatus.SuspendedEV:
+		StopTransaction(E_OCPP1_Reason.UnlockCommand);
+		UnlockConnector := TRUE;
+	E_OCPP1_ChargePointStatus.Finishing:
+		StopTransaction(E_OCPP1_Reason.UnlockCommand);
+		UnlockConnector := TRUE;
+ELSE
+	UnlockConnector := FALSE;
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

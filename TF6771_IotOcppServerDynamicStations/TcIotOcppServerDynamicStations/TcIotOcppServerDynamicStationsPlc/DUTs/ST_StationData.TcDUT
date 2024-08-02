@@ -1,0 +1,27 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.6">
+  <DUT Name="ST_StationData" Id="{de47947a-d18b-41cc-a94f-d9a7b936b4b1}">
+    <Declaration><![CDATA[TYPE ST_StationData :
+STRUCT
+	hStationId : UDINT;
+	sIdent : T_OCPP_Identity;
+	sAuthHash : T_OCPP_Hash;
+
+	// charging station
+	bOpen : BOOL;
+	nHeartbeats : UDINT;
+	eStationStatus : E_OCPP1_ChargePointStatus;
+	eConnector1Status : E_OCPP1_ChargePointStatus;
+	eConnector2Status : E_OCPP1_ChargePointStatus;
+	// boot notification
+	sModel : STRING(31); // Required. This contains a value that identifies the model of the ChargePoint.
+	sVendor : STRING(31); // Required. This contains a value that identifies the vendor of the ChargePoint.
+	sChargeBoxSerial : STRING(31); // Optional. This contains a value that identifies the serial number of the Charge Box inside the Charge Point.
+	sChargePointSerial : STRING(31); // Optional. This contains a value that identifies the serial number of the Charge Point.
+	sFirmwareVersion : STRING(63); // Optional. This contains the firmware version of the Charge Point.
+	sMeterSerial : STRING(31); // Optional. This contains the serial number of the main electrical meter of the Charge Point.
+	sMeterType : STRING(31); // Optional. This contains the type of the main electrical meter of the Charge Point.
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

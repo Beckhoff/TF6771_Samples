@@ -1,0 +1,916 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_Station" Id="{bf6e3102-f7a5-4c9a-a855-64637dbd1e16}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Station
+VAR_OUTPUT
+	bValid : BOOL;
+	bOpen: BOOL;
+	bRecv : BOOL;
+	bCharging : BOOL;
+	bReserved : BOOL;
+
+	arrStatus : ARRAY[0..Param_OCPP.nConnectorCount] OF E_OCPP1_ChargePointStatus;
+	arrMeasurands : ARRAY[0..Param_OCPP.nConnectorCount] OF FB_SampledValueMeasurands;
+END_VAR
+VAR
+	_fbStation : FB_OCPP1_Station('', '', 0);
+	_bRecvBoot : BOOL := TRUE;
+	_bRecvStatus : BOOL := TRUE;
+	_bRecvMeter : BOOL := TRUE;
+	_nSendState : UDINT;
+	_hMessageId : T_OCPP_MessageId;
+	_eTriggerStatus : E_OCPP1_TriggerMessageStatus;
+END_VAR
+VAR PERSISTENT
+	_nTransactionId: UDINT;
+	_arrTransactionId : ARRAY[0..Param_OCPP.nConnectorCount] OF UDINT; // [Wh]
+	_arrMeterStart : ARRAY[0..Param_OCPP.nConnectorCount] OF UDINT; // [Wh]
+	_arrMeterStop : ARRAY[0..Param_OCPP.nConnectorCount] OF UDINT; // [Wh]
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="ActionHistory" Id="{25f7cacc-5c4c-4b7a-b05c-66fb053b09de}">
+      <Declaration><![CDATA[METHOD ActionHistory : BOOL
+VAR_INPUT
+	eAction : E_OCPP1_Action;
+END_VAR
+VAR_STAT
+	arrHistory : ARRAY[1..cnCount] OF E_OCPP1_Action;
+END_VAR
+VAR CONSTANT
+	cnCount : UDINT := 100;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[MEMMOVE(ADR(arrHistory[2]), ADR(arrHistory[1]), SIZEOF(arrHistory[1]) * (cnCount - 1));
+arrHistory[1] := eAction;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Authorize" Id="{66e5ecb3-f184-4525-bb90-32fbfe1353df}">
+      <Declaration><![CDATA[METHOD Authorize : BOOL
+VAR_IN_OUT CONSTANT
+	sId : T_OCPP1_IdToken;
+END_VAR
+VAR
+	nIdx : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[FOR nIdx := 1 TO VAR_OCPP.nAuthListMax DO
+	IF VAR_OCPP.arrAuthList[nIdx].sIdTag = '' THEN
+		RETURN;
+	END_IF
+	IF VAR_OCPP.arrAuthList[nIdx].sIdTag = sId THEN
+		Authorize := (VAR_OCPP.arrAuthList[nIdx].stIdTagInfo.eStatus = E_OCPP1_AuthorizationStatus.Accepted);
+		RETURN;
+	END_IF
+END_FOR]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Execute" Id="{e1c64366-17d5-4a57-854f-6ddce2bf0b53}">
+      <Declaration><![CDATA[METHOD Execute : BOOL
+VAR_STAT
+	hMessageId : T_OCPP_MessageId;
+	eAction : E_OCPP1_Action;
+	eSendState : E_OCPP1_Action;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[bValid := _fbStation.bValid;
+IF NOT bValid THEN RETURN; END_IF
+
+IF NOT bOpen AND_THEN _fbStation.IsConnected THEN
+	bOpen := TRUE;
+	bRecv := TRUE;
+ELSIF bOpen AND_THEN NOT _fbStation.IsConnected THEN
+	bOpen := FALSE;
+END_IF
+
+IF _fbStation.PollRequest(eAction => eAction, hMessageId => hMessageId) THEN
+	bRecv := TRUE;
+	ActionHistory(eAction);
+	CASE eAction OF
+		E_OCPP1_Action.BootNotification:
+			RecvBootNotification();
+		E_OCPP1_Action.Heartbeat:
+			RecvHeartbeat();
+		E_OCPP1_Action.MeterValues:
+			RecvMeterValues();
+		E_OCPP1_Action.StatusNotification:
+			RecvStatusNotification();
+		E_OCPP1_Action.Authorize:
+			RecvAuthorize();
+		E_OCPP1_Action.StartTransaction:
+			RecvStartTransaction();
+		E_OCPP1_Action.StopTransaction:
+			RecvStopTransaction();
+		E_OCPP1_Action.DiagnosticsStatusNotification:
+			RecvDiagnosticsStatusNotification();
+		E_OCPP1_Action.FirmwareStatusNotification:
+			RecvFirmwareStatusNotification();
+		E_OCPP1_Action.DataTransfer:
+			RecvDataTransfer();
+		E_OCPP1_Action.SecurityEventNotification:
+			RecvSecurityEventNotification();
+	ELSE
+		_fbStation.RespError(hMessageId, eAction, E_OCPP1_Error.NotImplemented);
+	END_CASE
+END_IF
+
+CASE _nSendState OF
+	0: // idle
+		bRecv := FALSE;
+	1:
+		IF bRecv THEN
+			IF _bRecvBoot THEN
+				_bRecvBoot := FALSE;
+				_nSendState := 10;
+			ELSIF _bRecvStatus THEN
+				_bRecvStatus := FALSE;
+				_nSendState := 20;
+			ELSIF _bRecvMeter THEN
+				_bRecvMeter := FALSE;
+				_nSendState := 30;
+			END_IF
+			bRecv := FALSE;
+		END_IF
+	10: // BootNotification
+		IF _fbStation.SendTriggerMessage(eRequestedMessage:= E_OCPP1_MessageTrigger.BootNotification, nConnectorId:= 0, eStatus=> _eTriggerStatus) THEN
+			_nSendState := 0;
+		END_IF
+	20: // StatusNotification
+		IF _fbStation.SendTriggerMessage(eRequestedMessage:= E_OCPP1_MessageTrigger.StatusNotification, nConnectorId:= 0, eStatus=> _eTriggerStatus) THEN
+			IF _eTriggerStatus = E_OCPP1_TriggerMessageStatus.Accepted THEN
+				_nSendState := 21;
+			ELSE
+				arrStatus[0] := E_OCPP1_ChargePointStatus.Unavailable;
+				_nSendState := 0;
+			END_IF
+		END_IF
+	21: // StatusNotification
+		IF _fbStation.SendTriggerMessage(eRequestedMessage:= E_OCPP1_MessageTrigger.StatusNotification, nConnectorId:= 1, eStatus=> _eTriggerStatus) THEN
+			IF _eTriggerStatus = E_OCPP1_TriggerMessageStatus.Accepted THEN
+				_nSendState := 22;
+			ELSE
+				arrStatus[1] := E_OCPP1_ChargePointStatus.Unavailable;
+				_nSendState := 0;
+			END_IF
+		END_IF
+	22: // StatusNotification
+		IF _fbStation.SendTriggerMessage(eRequestedMessage:= E_OCPP1_MessageTrigger.StatusNotification, nConnectorId:= 2, eStatus=> _eTriggerStatus) THEN
+			IF _eTriggerStatus = E_OCPP1_TriggerMessageStatus.Accepted THEN
+				_nSendState := 0;
+			ELSE
+				arrStatus[2] := E_OCPP1_ChargePointStatus.Unavailable;
+				_nSendState := 0;
+			END_IF
+		END_IF
+	30: // MeterValues
+		IF _fbStation.SendTriggerMessage(eRequestedMessage:= E_OCPP1_MessageTrigger.MeterValues, nConnectorId:= 0, eStatus=> _eTriggerStatus) THEN
+			//IF _eTriggerStatus = E_OCPP1_TriggerMessageStatus.Accepted THEN
+				_nSendState := 31;
+			//ELSE
+				//_nSendState := 0;
+			//END_IF
+		END_IF
+	31: // MeterValues
+		IF _fbStation.SendTriggerMessage(eRequestedMessage:= E_OCPP1_MessageTrigger.MeterValues, nConnectorId:= 1, eStatus=> _eTriggerStatus) THEN
+			IF _eTriggerStatus = E_OCPP1_TriggerMessageStatus.Accepted THEN
+				_nSendState := 32;
+			ELSE
+				_nSendState := 0;
+			END_IF
+		END_IF
+	32: // MeterValues
+		IF _fbStation.SendTriggerMessage(eRequestedMessage:= E_OCPP1_MessageTrigger.MeterValues, nConnectorId:= 2, eStatus=> _eTriggerStatus) THEN
+			IF _eTriggerStatus = E_OCPP1_TriggerMessageStatus.Accepted THEN
+				_nSendState := 0;
+			ELSE
+				_nSendState := 0;
+			END_IF
+		END_IF
+	E_OCPP1_Action.RemoteStartTransaction:
+		SendRemoteStartTransaction();
+	E_OCPP1_Action.RemoteStopTransaction:
+		SendRemoteStopTransaction();
+	E_OCPP1_Action.ChangeAvailability:
+		SendChangeAvailability();
+	E_OCPP1_Action.ChangeConfiguration:
+		SendChangeConfiguration();
+	E_OCPP1_Action.GetConfiguration:
+		SendGetConfiguration();
+	E_OCPP1_Action.UnlockConnector:
+		SendUnlockConnector();
+	E_OCPP1_Action.ClearCache:
+		SendClearCache();
+	E_OCPP1_Action.Reset:
+		SendReset();
+	E_OCPP1_Action.TriggerMessage:
+		SendTriggerMessage();
+	E_OCPP1_Action.ReserveNow:
+		SendReserveNow();
+	E_OCPP1_Action.CancelReservation:
+		SendCancelReservation();
+	E_OCPP1_Action.SetChargingProfile:
+		SendChargingProfile();
+	E_OCPP1_Action.GetCompositeSchedule:
+		SendGetCompositeSchedule();
+	E_OCPP1_Action.ClearChargingProfile:
+		SendClearChargingProfile();
+	E_OCPP1_Action.GetLocalListVersion:
+		SendGetLocalListVersion();
+	E_OCPP1_Action.SendLocalList:
+		SendLocalList();
+	E_OCPP1_Action.GetDiagnostics:
+		SendGetDiagnostics();
+	E_OCPP1_Action.UpdateFirmware:
+		SendUpdateFirmware();
+	E_OCPP1_Action.DataTransfer:
+		SendDataTransfer();
+ELSE
+	_nSendState := 0;
+END_CASE
+
+IF _nSendState = 0 AND eSendState <> 0 THEN
+	_nSendState := eSendState;
+	eSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{b2d50e31-cf01-4543-bc1b-e90c7c6e4f9a}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	sIdent : T_OCPP_Identity;
+	sAuthHash : T_OCPP_Hash;
+	fbServer : REFERENCE TO FB_Server;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+FB_Init := _fbStation.Init(sIdent, sAuthHash, fbServer.Server);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvAuthorize" Id="{e66384a3-a6cb-4eea-8341-98916c741c0a}">
+      <Declaration><![CDATA[METHOD RecvAuthorize : BOOL
+VAR_STAT
+	sIdTag: T_OCPP1_IdToken;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvAuthorize(hMessageId => _hMessageId, sIdTag => sIdTag) THEN
+	IF Authorize(sIdTag) THEN
+		_fbStation.RespAuthorize(_hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Accepted);
+	ELSE
+		_fbStation.RespAuthorize(_hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Invalid);
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvBootNotification" Id="{9ade1ba1-95c3-430b-8738-0fe7286e7ae5}">
+      <Declaration><![CDATA[METHOD RecvBootNotification : BOOL
+VAR_STAT
+	sModel : STRING(31);
+	sVendor : STRING(31);
+	sChargeBoxSerial : STRING(31);
+	sChargePointSerial : STRING(31);
+	sFirmwareVersion : STRING(63);
+	sMeterSerial : STRING(31);
+	sMeterType : STRING(31);
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvBootNotification(hMessageId=> _hMessageId,
+	sModel=> sModel,
+	sVendor=> sVendor,
+	sChargeBoxSerial=> sChargeBoxSerial,
+	sChargePointSerial=> sChargePointSerial,
+	sFirmwareVersion=> sFirmwareVersion,
+	sMeterSerial=> sMeterSerial,
+	sMeterType=> sMeterType)
+THEN
+	_fbStation.RespBootNotification(_hMessageId,
+		eStatus := E_OCPP1_RegistrationStatus.Accepted);
+	_bRecvBoot := FALSE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvDataTransfer" Id="{db0aa4b3-dcbc-4724-8d11-493373db4466}">
+      <Declaration><![CDATA[METHOD RecvDataTransfer : BOOL
+VAR_STAT
+	sVendorId : STRING(255);
+	sMessageId : STRING(63);
+	sData : T_OCPP1_DataTransferData;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvDataTransfer(hMessageId => _hMessageId,
+	sVendorId=> sVendorId,
+	sMessageId=> sMessageId,
+	sData := sData)
+THEN
+	IF sVendorId <> 'Beckhoff Automation' THEN
+		_fbStation.RespDataTransfer(_hMessageId, eStatus := E_OCPP1_DataTransferStatus.UnknownVendorId);
+	ELSIF sMessageId <> 'DataTransfer' THEN
+		_fbStation.RespDataTransfer(_hMessageId, eStatus := E_OCPP1_DataTransferStatus.UnknownMessageId);
+	ELSE
+		_fbStation.RespDataTransfer(_hMessageId, eStatus := E_OCPP1_DataTransferStatus.Accepted);
+	END_IF
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvDiagnosticsStatusNotification" Id="{c656cce9-74f1-4da6-a4c4-c46daa24cb58}">
+      <Declaration><![CDATA[METHOD RecvDiagnosticsStatusNotification : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvDiagnosticsStatusNotification(hMessageId => _hMessageId) THEN
+	_fbStation.RespDiagnosticsStatusNotification(_hMessageId);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvFirmwareStatusNotification" Id="{86e06c8d-4f90-4f35-9a12-ba6106125e5a}">
+      <Declaration><![CDATA[METHOD RecvFirmwareStatusNotification : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvFirmwareStatusNotification(hMessageId => _hMessageId) THEN
+	_fbStation.RespFirmwareStatusNotification(_hMessageId);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvHeartbeat" Id="{554b79d0-7589-4f52-8be8-0ec507d317ef}">
+      <Declaration><![CDATA[METHOD RecvHeartbeat : BOOL
+VAR_STAT
+	nHeartbeats : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvHeartbeat(hMessageId => _hMessageId) THEN
+	nHeartbeats := nHeartbeats + 1;
+	_fbStation.RespHeartbeat(_hMessageId);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvMeterValues" Id="{a037c9ec-bfba-4920-b98d-da113c62ead3}">
+      <Declaration><![CDATA[METHOD RecvMeterValues : BOOL
+VAR_STAT
+	nConnectorId : UDINT;
+	nTransactionId : UDINT;
+	nSampleCount : UDINT;
+	arrSampleValues : ARRAY[1..Param_OCPP.nSampledValuesMax] OF ST_OCPP1_SampledValue;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvMeterValue(
+	hMessageId => _hMessageId,
+	nConnectorId => nConnectorId,
+	nTransactionId => nTransactionId,
+	nSampleCount => nSampleCount,
+	aSampleValues := arrSampleValues)
+THEN
+	IF nConnectorId >= 0 AND nConnectorId <= Param_OCPP.nConnectorCount THEN
+		arrMeasurands[nConnectorId].Update(arrSampleValues);
+	END_IF
+	_fbStation.RespMeterValue(_hMessageId);
+	_bRecvMeter := FALSE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvSecurityEventNotification" Id="{2e09a442-99fa-463d-a011-13c5b51f790c}">
+      <Declaration><![CDATA[METHOD RecvSecurityEventNotification : BOOL
+VAR_STAT
+	nTimestamp : ULINT;
+	sType : STRING(63);
+	sInfo : STRING(256);
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvSecurityEventNotification(hMessageId => _hMessageId,
+	nTimestamp => nTimestamp,
+	sType => sType,
+	sInfo => sInfo)
+THEN
+	_fbStation.RespSecurityEventNotification(_hMessageId);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvStartTransaction" Id="{30c9682f-c18e-409b-8dbe-7d42989b7d2e}">
+      <Declaration><![CDATA[METHOD RecvStartTransaction : BOOL
+VAR_STAT
+	sIdTag : T_OCPP1_IdToken;
+	nConnectorId : UDINT;
+	nMeterStart : UDINT;
+	nReservationId : UDINT;
+	nTimestamp : ULINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvStartTransaction(hMessageId => _hMessageId,
+	sIdTag => sIdTag,
+	nConnectorId => nConnectorId,
+	nMeterStart => nMeterStart,
+	nReservationId => nReservationId,
+	nTimestamp => nTimestamp)
+THEN
+	IF Authorize(sIdTag) THEN
+		IF nConnectorId >= 1 AND nConnectorId <= Param_OCPP.nConnectorCount THEN
+			_nTransactionId := _nTransactionId + 1;
+			_arrTransactionId[nConnectorId] := _nTransactionId;
+			_arrMeterStart[nConnectorId] := nMeterStart;
+			_fbStation.RespStartTransaction(_hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Accepted, nTransactionId := _nTransactionId);
+			bCharging := TRUE;
+			RETURN;
+		END_IF
+	END_IF
+	_fbStation.RespStartTransaction(_hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Invalid, nTransactionId := 0);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvStatusNotification" Id="{3c7410f7-9f93-41b2-9abc-ad3c343a923a}">
+      <Declaration><![CDATA[METHOD RecvStatusNotification : BOOL
+VAR_STAT
+	nConnectorId : UDINT;
+	eError : E_OCPP1_ChargePointError;
+	eStatus : E_OCPP1_ChargePointStatus;
+	nTimestamp : ULINT := 0;
+	sInfo : STRING(63) := '';
+	sVendorError : STRING(63) := '';
+	sVendorId : STRING(255) := '';
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvStatusNotification(hMessageId => _hMessageId,
+	nConnectorId => nConnectorId,
+	eError => eError,
+	eStatus => eStatus,
+	nTimestamp => nTimestamp,
+	sInfo => sInfo,
+	sVendorError => sVendorError,
+	sVendorId => sVendorId)
+THEN
+	IF nConnectorId >= 0 AND nConnectorId <= Param_OCPP.nConnectorCount THEN
+		arrStatus[nConnectorId] := eStatus;
+		StatusHistory(nConnectorId, eStatus);
+		bCharging := (eStatus = E_OCPP1_ChargePointStatus.Charging);
+		bReserved := (eStatus = E_OCPP1_ChargePointStatus.Reserved);
+	END_IF
+	_fbStation.RespStatusNotification(_hMessageId);
+	_bRecvStatus := FALSE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RecvStopTransaction" Id="{ce44ddbe-8cd4-48ad-802c-c7b781be894e}">
+      <Declaration><![CDATA[METHOD RecvStopTransaction : BOOL
+VAR_STAT
+	sIdTag : T_OCPP1_IdToken;
+	nTransactionId : UDINT;
+	nConnectorId : UDINT;
+	nMeterStop : UDINT;
+	nTimestamp : ULINT;
+	eReason : E_OCPP1_Reason;
+END_VAR
+VAR
+	nIdx : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.RecvStopTransaction(hMessageId => _hMessageId,
+	sIdTag => sIdTag,
+	nTransactionId => nTransactionId,
+	nConnectorId => nConnectorId,
+	nMeterStop => nMeterStop,
+	nTimestamp => nTimestamp,
+	eReason => eReason)
+THEN
+	IF sIdTag = '' OR_ELSE Authorize(sIdTag) THEN
+		IF nConnectorId >= 1 AND nConnectorId <= Param_OCPP.nConnectorCount THEN
+			_arrTransactionId[nConnectorId] := 0;
+			_arrMeterStop[nConnectorId] := nMeterStop;
+			_fbStation.RespStopTransaction(_hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Accepted);
+			bCharging := FALSE;
+			RETURN;
+		END_IF
+		FOR nIdx := 1 TO Param_OCPP.nConnectorCount DO
+			IF _arrTransactionId[nIdx] = nTransactionId THEN
+				_arrTransactionId[nIdx] := 0;
+				_arrMeterStop[nIdx] := nMeterStop;
+				_fbStation.RespStopTransaction(_hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Accepted);
+				bCharging := FALSE;
+				RETURN;
+ 			END_IF
+		END_FOR
+	END_IF
+	_fbStation.RespStopTransaction(_hMessageId, eStatus := E_OCPP1_AuthorizationStatus.Invalid);
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendCancelReservation" Id="{e4a216c2-45b8-4fca-abee-dcd4ac8f0833}">
+      <Declaration><![CDATA[METHOD SendCancelReservation : BOOL
+VAR_STAT
+	nReservationId : UDINT := VAR_OCPP.nReservationId;
+
+	eStatus : E_OCPP1_CancelReservationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendCancelReservation(nReservationId:= nReservationId, eStatus=> eStatus) THEN
+	bReserved := (eStatus <> E_OCPP1_CancelReservationStatus.Accepted);
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendChangeAvailability" Id="{7577c310-cfce-4b50-81f4-48bcf0a0c5db}">
+      <Declaration><![CDATA[METHOD SendChangeAvailability : BOOL
+VAR_STAT
+	nConnectorId : UDINT := 1;
+	eType : E_OCPP1_AvailabilityType;
+
+	eStatus : E_OCPP1_AvailabilityStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF eType = E_OCPP1_AvailabilityType.None THEN
+	IF arrStatus[1] = E_OCPP1_ChargePointStatus.Unavailable THEN
+		eType := E_OCPP1_AvailabilityType.Operative;
+	ELSE
+		eType := E_OCPP1_AvailabilityType.Inoperative;
+	END_IF
+END_IF
+IF _fbStation.SendChangeAvailability(nConnectorId := nConnectorId, eType := eType, eStatus => eStatus) THEN
+	eType := E_OCPP1_AvailabilityType.None;
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendChangeConfiguration" Id="{6285cf66-2018-45d5-821c-fb65587be3cf}">
+      <Declaration><![CDATA[METHOD SendChangeConfiguration : BOOL
+VAR_STAT
+	sKey : T_OCPP1_ConfigKey;
+	sValue : T_OCPP1_ConfigValue;
+
+	eStatus : E_OCPP1_ConfigurationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF sKey = '' THEN
+	eStatus := E_OCPP1_ConfigurationStatus.Rejected;
+	RETURN;
+END_IF
+IF _fbStation.SendChangeConfiguration(sKey:= sKey, sValue:= sValue, eStatus=> eStatus) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendChargingProfile" Id="{aefd0c90-8754-40d4-aec7-4e3dad32169a}">
+      <Declaration><![CDATA[METHOD SendChargingProfile : BOOL
+VAR_STAT
+	nConnectorId : UDINT := 1;
+	mChargingProfile : ST_OCPP1_ChargingProfileMax;
+
+	eStatus : E_OCPP1_ChargingProfileStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF mChargingProfile.nProfileId = 0 THEN
+	mChargingProfile.nProfileId := 1;
+	mChargingProfile.nTransactionId := 0;
+	mChargingProfile.nStackLevel := 1;
+	mChargingProfile.eProfilePurpose := E_OCPP1_ChargingProfilePurposeType.TxDefaultProfile;
+	mChargingProfile.eProfileKind :=	E_OCPP1_ChargingProfileKindType.Relative;
+	mChargingProfile.eRecurrencyKind := E_OCPP1_RecurrencyKindType.None;
+	mChargingProfile.nValidFrom := 0;
+	mChargingProfile.nValidTo := 0;
+	mChargingProfile.mSchedule.nStart := 0;
+	mChargingProfile.mSchedule.nDuration := 0;
+	mChargingProfile.mSchedule.eRateUnit := E_OCPP1_ChargingRateUnitType.A;
+	mChargingProfile.mSchedule.fRateMin := 0.0;
+	mChargingProfile.mSchedule.nPeriodCount := 6;
+	mChargingProfile.mSchedule.aPeriods[1].nStart := 0;
+	mChargingProfile.mSchedule.aPeriods[1].fLimit := 2.0; // 2A => 1.380W
+	mChargingProfile.mSchedule.aPeriods[2].nStart := 60;
+	mChargingProfile.mSchedule.aPeriods[2].fLimit := 4.0; // 4A => 2.760W
+	mChargingProfile.mSchedule.aPeriods[3].nStart := 120;
+	mChargingProfile.mSchedule.aPeriods[3].fLimit := 6.0; // 6A => 4.140W
+	mChargingProfile.mSchedule.aPeriods[4].nStart := 180;
+	mChargingProfile.mSchedule.aPeriods[4].fLimit := 8.0; // 8A => 5.520W
+	mChargingProfile.mSchedule.aPeriods[5].nStart := 240;
+	mChargingProfile.mSchedule.aPeriods[5].fLimit := 10.0; // 10A => 6.900W
+	mChargingProfile.mSchedule.aPeriods[6].nStart := 300;
+	mChargingProfile.mSchedule.aPeriods[6].fLimit := 16.0; // 16A => 11.040W
+END_IF
+IF _fbStation.SendChargingProfile(nConnectorId:= nConnectorId, mChargingProfile:= mChargingProfile, eStatus=> eStatus) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendClearCache" Id="{e87d0ad5-6d6a-48af-ad93-e968a3088154}">
+      <Declaration><![CDATA[METHOD SendClearCache : BOOL
+VAR_STAT
+	eStatus : E_OCPP1_ClearCacheStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendClearCache(eStatus => eStatus) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendClearChargingProfile" Id="{be1a3e98-b0d7-4e61-8fc9-63599ce8ace9}">
+      <Declaration><![CDATA[METHOD SendClearChargingProfile : BOOL
+VAR_STAT
+	nProfileId : UDINT := 1;
+	nConnectorId : UDINT := 1;
+	eChargingProfilePurpose : E_OCPP1_ChargingProfilePurposeType := E_OCPP1_ChargingProfilePurposeType.None;
+	nStackLevel : UDINT := 0;
+
+	eStatus : E_OCPP1_ClearChargingProfileStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendClearChargingProfile(
+	nProfileId:= nProfileId,
+	nConnectorId:= nConnectorId,
+	eChargingProfilePurpose:= eChargingProfilePurpose,
+	nStackLevel:= nStackLevel,
+	eStatus=> eStatus)
+THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendDataTransfer" Id="{fd13edb6-8894-09f9-0b34-13cff8f3f2a0}">
+      <Declaration><![CDATA[METHOD SendDataTransfer : BOOL
+VAR_STAT
+	sVendorId : STRING(255) := 'Beckhoff Automation'; 
+	sMessageId : STRING(63) := 'DataTransfer'; 
+	sData : T_OCPP1_DataTransferData := '{"Vendor":"Beckhoff Automation","Message":"DataTransfer","Data":"This is a test message"}'; 
+	eStatus : E_OCPP1_DataTransferStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendDataTransfer(sVendorId, sMessageId, sData, eStatus => eStatus) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendGetCompositeSchedule" Id="{5853a8ce-ccba-4aee-a519-30fec2da314a}">
+      <Declaration><![CDATA[METHOD SendGetCompositeSchedule : BOOL
+VAR_STAT
+	nConnectorId : UDINT := 1;
+	nDuration : UDINT := 24 * 3600;
+	eChargingRateUnit : E_OCPP1_ChargingRateUnitType := E_OCPP1_ChargingRateUnitType.A;
+
+	eStatus : E_OCPP1_GetCompositeScheduleStatus;
+	nConnectorIdRes : UDINT;
+	nScheduleStart : ULINT := 0;
+	mChargingSchedule : ST_OCPP1_ChargingScheduleMax;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendGetCompositeSchedule(
+	nConnectorId:= nConnectorId,
+	nDuration:= nDuration,
+	eChargingRateUnit := eChargingRateUnit,
+	eStatus=> eStatus,
+	nConnectorIdRes => nConnectorIdRes,
+	nScheduleStart => nScheduleStart,
+	mChargingSchedule=> mChargingSchedule)
+THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendGetConfiguration" Id="{d6383316-fc28-442c-836e-a23a18039535}">
+      <Declaration><![CDATA[METHOD SendGetConfiguration : BOOL
+VAR_STAT
+	nKeysCount : UDINT := 0;
+	nUnknownCount : UDINT := 0;
+
+	arrKeys : ARRAY[1..100] OF ST_OCPP1_ConfigKeyValue;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendGetConfiguration(nKeysCount => nKeysCount, nUnknownCount => nUnknownCount, aKeys:= arrKeys) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendGetDiagnostics" Id="{97220b82-ce49-454c-bdb1-8eec86e2eeb2}">
+      <Declaration><![CDATA[METHOD SendGetDiagnostics : BOOL
+VAR_STAT
+	sLocation : STRING(255) := 'dummy.txt';
+	nRetries : UDINT := 3;
+	nRetryInterval : UDINT := 60;
+	nStartTime : ULINT;
+	nStopTime : ULINT;
+
+	sFileName : STRING(255); // Optional. This contains the name of the file with diagnostic information that will be uploaded.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendGetDiagnostics(
+	sLocation:= sLocation,
+	nRetries:= nRetries,
+	nRetryInterval:= nRetryInterval,
+	nStartTime:= nStartTime,
+	nStopTime:= nStopTime,
+	sFileName=> sFileName)
+THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendGetLocalListVersion" Id="{6b19ca4f-b182-4fb7-9eee-0f978627dc80}">
+      <Declaration><![CDATA[METHOD SendGetLocalListVersion : BOOL
+VAR_STAT
+	nListVersion : UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendGetLocalListVersion(nListVersion => nListVersion) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendLocalList" Id="{acbb860e-c629-4f41-bc7e-2c3976809a06}">
+      <Declaration><![CDATA[METHOD SendLocalList : BOOL
+VAR_STAT
+	nListVersion : UDINT := 1;
+	eUpdateType : E_OCPP1_UpdateType := E_OCPP1_UpdateType.Full;
+
+	eStatus : E_OCPP1_UpdateStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendLocalList(
+	nListVersion:= nListVersion,
+	eUpdateType:= eUpdateType,
+	nAuthCount:= VAR_OCPP.nAuthListMax,
+	aAuthList:= VAR_OCPP.arrAuthList,
+	eStatus=> eStatus)
+THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendRemoteStartTransaction" Id="{262d1797-3fde-4144-9093-17f931c354be}">
+      <Declaration><![CDATA[METHOD SendRemoteStartTransaction : BOOL
+VAR_STAT
+	nConnectorId : UDINT := 1;
+	sIdToken : T_OCPP1_IdToken := VAR_OCPP.sIdTag;
+
+	eStatus : E_OCPP1_RemoteStartStopStatus; // Required. Status indicating whether Charge Point accepts the request to start a transaction.
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendRemoteStartTransaction(nConnectorId := nConnectorId, sIdToken := sIdToken, eStatus => eStatus) THEN
+	bCharging := (eStatus = E_OCPP1_RemoteStartStopStatus.Accepted);
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendRemoteStopTransaction" Id="{3abe8276-4592-494b-96a1-7bbaebad633b}">
+      <Declaration><![CDATA[METHOD SendRemoteStopTransaction : BOOL
+VAR_STAT
+	nConnectorId : UDINT := 1;
+	nTransactionId : UDINT;
+
+	eStatus : E_OCPP1_RemoteStartStopStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nTransactionId = 0 THEN
+	nTransactionId := _arrTransactionId[nConnectorId];
+END_IF
+IF _fbStation.SendRemoteStopTransaction(nTransactionId := nTransactionId, eStatus => eStatus) THEN
+	nTransactionId := 0;
+	bCharging := (eStatus <> E_OCPP1_RemoteStartStopStatus.Accepted);
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendReserveNow" Id="{bb93bd1d-c5a6-47ba-b814-6f5b03071ad6}">
+      <Declaration><![CDATA[METHOD SendReserveNow : BOOL
+VAR_STAT
+	nConnectorId : UDINT := 1;
+	nExpiryDate : ULINT;
+	sIdTag : T_OCPP1_IdToken := VAR_OCPP.sIdTag;
+	nReservationId : UDINT := VAR_OCPP.nReservationId;
+
+	eStatus : E_OCPP1_ReservationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nExpiryDate = 0 THEN
+	nExpiryDate := F_GetSystemTime() + 3600 * 10000000;
+END_IF
+IF _fbStation.SendReserveNow(
+	nConnectorId:= nConnectorId,
+	nExpiryDate:= nExpiryDate,
+	sIdTag:= sIdTag,
+	sParentIdTag:= '',
+	nReservationId:= nReservationId,
+	eStatus=> eStatus)
+THEN
+	bReserved := (eStatus = E_OCPP1_ReservationStatus.Accepted);
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendReset" Id="{a18f0554-0082-4222-92f2-50a83a5dc019}">
+      <Declaration><![CDATA[METHOD SendReset : BOOL
+VAR_STAT
+	eType : E_OCPP1_ResetType := E_OCPP1_ResetType.Hard;
+
+	eStatus : E_OCPP1_ResetStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendReset(eType := eType, eStatus => eStatus) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendTriggerMessage" Id="{7ae2171e-ba1d-46d5-bfb1-19f60aad9462}">
+      <Declaration><![CDATA[METHOD SendTriggerMessage : BOOL
+VAR_STAT
+	eRequestedMessage : E_OCPP1_MessageTrigger := E_OCPP1_MessageTrigger.Heartbeat;
+	nConnectorId : UDINT := 0;
+
+	eStatus : E_OCPP1_TriggerMessageStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendTriggerMessage(eRequestedMessage:= eRequestedMessage, nConnectorId:= nConnectorId, eStatus=> eStatus) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendUnlockConnector" Id="{e0406d2d-ca12-4c19-937c-bbb8fbd69e3b}">
+      <Declaration><![CDATA[METHOD SendUnlockConnector : BOOL
+VAR_STAT
+	nConnectorId : UDINT := 1;
+
+	eStatus : E_OCPP1_UnlockStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.SendUnlockConnector(nConnectorId := nConnectorId, eStatus => eStatus) THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SendUpdateFirmware" Id="{25ad4c72-9a96-4ff5-bf50-2dde623fc55f}">
+      <Declaration><![CDATA[METHOD SendUpdateFirmware : BOOL
+VAR_STAT
+	sLocation : STRING(255);
+	nRetries : UDINT := 3;
+	nRetryInterval : UDINT := 60;
+	nRetrieveDate : ULINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nRetrieveDate = 0 THEN
+	nRetrieveDate := F_GetSystemTime();
+END_IF
+IF _fbStation.SendUpdateFirmware(
+	sLocation := sLocation,
+	nRetries := nRetries,
+	nRetryInterval := nRetryInterval,
+	nRetrieveDate := nRetrieveDate)
+THEN
+	_nSendState := 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StatusHistory" Id="{a2698b0d-fd8f-0780-3905-9d4e5c2d3d45}">
+      <Declaration><![CDATA[METHOD StatusHistory : BOOL
+VAR_INPUT
+	nConnectorId : UDINT;
+	eStatus : E_OCPP1_ChargePointStatus;
+END_VAR
+VAR
+	arrHistory : REFERENCE TO ARRAY[1..cnCount] OF E_OCPP1_ChargePointStatus;;
+END_VAR
+VAR_STAT
+	arrConnectorHistory : ARRAY[0..Param_OCPP.nConnectorCount] OF ARRAY[1..cnCount] OF E_OCPP1_ChargePointStatus;
+END_VAR
+VAR CONSTANT
+	cnCount : UDINT := 100;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nConnectorId <= Param_OCPP.nConnectorCount THEN
+	arrHistory REF= arrConnectorHistory[nConnectorId];
+	MEMMOVE(ADR(arrHistory[2]), ADR(arrHistory[1]), SIZEOF(arrHistory[1]) * (cnCount - 1));
+	arrHistory[1] := eStatus;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="TrigReserveCancel" Id="{ef4c2a1b-dd80-48d6-91b1-16b92dd85ff8}">
+      <Declaration><![CDATA[METHOD TrigReserveCancel : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nSendState = 0 THEN
+	_nSendState := E_OCPP1_Action.CancelReservation;
+	TrigReserveCancel := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="TrigReserveNow" Id="{cbb9ab2d-798e-4b93-b25d-0f4d45632a7e}">
+      <Declaration><![CDATA[METHOD TrigReserveNow : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nSendState = 0 THEN
+	_nSendState := E_OCPP1_Action.ReserveNow;
+	TrigReserveNow := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="TrigStartTransaction" Id="{b78350bd-cf2d-4838-bbc2-0336f717a559}">
+      <Declaration><![CDATA[METHOD TrigStartTransaction : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nSendState = 0 THEN
+	_nSendState := E_OCPP1_Action.RemoteStartTransaction;
+	TrigStartTransaction := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="TrigStopTransaction" Id="{da622a74-dba9-40bf-a8f2-ffefd451bea7}">
+      <Declaration><![CDATA[METHOD TrigStopTransaction : BOOL]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nSendState = 0 THEN
+	_nSendState := E_OCPP1_Action.RemoteStopTransaction;
+	TrigStopTransaction := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

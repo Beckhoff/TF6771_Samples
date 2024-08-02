@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <GVL Name="VAR_Param" Id="{4877451f-5147-4895-8ce1-fddd84565e5e}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL CONSTANT
+	tSamplePeriodic : TIME := T#30S; // Interval of sample periodic meter values in FB_ConnectorMeter
+	tSampleClock : TIME := T#60S; // Interval of sample clock meter values in FB_StationMeter
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

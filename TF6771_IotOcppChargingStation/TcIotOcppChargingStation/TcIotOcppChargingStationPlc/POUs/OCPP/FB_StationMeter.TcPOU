@@ -1,0 +1,101 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_StationMeter" Id="{afe11b27-0158-000b-11ba-7d38b62caa38}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_StationMeter
+VAR
+	tonSample : TON;
+	fbMeter : FB_MeterValue(0, 0);
+	fbSampleTemperature : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSampleVoltageL1 : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSampleVoltageL2 : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSampleVoltageL3 : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+	fbSampleFrequency : FB_SampleValue(0, E_OCPP1_ReadingContext.None, E_OCPP1_Measurand.None, E_OCPP1_Phase.None, E_OCPP1_Location.None, E_OCPP1_Unit.None);
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="Execute" Id="{e6c7438b-008d-0ef6-07f5-b4dd95b9fab5}">
+      <Declaration><![CDATA[METHOD Execute : BOOL
+VAR_INPUT
+	fbStation : REFERENCE TO FB_Station;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[tonSample(
+	IN := TRUE,
+	PT := VAR_Param.tSampleClock);
+
+fbMeter.Execute();
+
+IF tonSample.Q AND fbStation.Available THEN
+	tonSample(IN := FALSE);
+	fbSampleTemperature.SetValue(23.4);
+	fbSampleVoltageL1.SetValue(230.1);
+	fbSampleVoltageL2.SetValue(229.9);
+	fbSampleVoltageL3.SetValue(230.0);
+	fbSampleFrequency.SetValue(50.012);
+	fbMeter.Send();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{b58521ce-7fa1-0403-03d4-baef4eaacb7b}">
+      <Declaration><![CDATA[METHOD FB_Init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+
+	fbStation : REFERENCE TO FB_Station;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF bInCopyCode THEN RETURN; END_IF
+
+IF NOT __ISVALIDREF(fbStation) THEN RETURN; END_IF
+
+FB_Init := Init(fbStation);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Init" Id="{93b77553-bc56-043c-3aab-9afbb56d79c4}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_IN_OUT CONSTANT
+	fbStation : FB_Station;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fbMeter.Init(
+	nConnectorId:= 0,
+	fbStation:= fbStation);
+
+fbSampleVoltageL1.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SampleClock,
+	eMeasurand:= E_OCPP1_Measurand.Voltage,
+	ePhase:= E_OCPP1_Phase.L1,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.V);
+
+fbSampleVoltageL2.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SampleClock,
+	eMeasurand:= E_OCPP1_Measurand.Voltage,
+	ePhase:= E_OCPP1_Phase.L2,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.V);
+
+fbSampleVoltageL3.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SampleClock,
+	eMeasurand:= E_OCPP1_Measurand.Voltage,
+	ePhase:= E_OCPP1_Phase.L3,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.V);
+
+fbSampleFrequency.Init(
+	fbMeterValue:= fbMeter,
+	eContext:= E_OCPP1_ReadingContext.SampleClock,
+	eMeasurand:= E_OCPP1_Measurand.Frequency,
+	ePhase:= E_OCPP1_Phase.None,
+	eLocation:= E_OCPP1_Location.None,
+	eUnit:= E_OCPP1_Unit.None);]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

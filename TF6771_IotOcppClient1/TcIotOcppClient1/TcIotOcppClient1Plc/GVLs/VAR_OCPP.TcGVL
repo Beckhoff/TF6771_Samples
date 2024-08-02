@@ -1,0 +1,40 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <GVL Name="VAR_OCPP" Id="{3abed1c9-8def-469d-a5c3-cc0cbf0bb6b7}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL
+	stClientParam : ST_OCPP1_ClientParam := (
+		//nOID : OTCID := 0; // ObjectID of the TcIotOcpp Client Object (0 to create a new instance).
+		nTaskOID := 0, // ObjectId of the Task whose shall execute the client (0 to use I/O Idle Task)
+		bConnect := FALSE, // Automatically connect to server.
+		sHost := 'localhost', // Defines the server-address by host-name, domain-name or IP-address.
+		nPort := 8080, // Defines the server-port.
+		sPath := 'ocpp', // Defines the server-path.
+		sIdentity := 'Test01', // Defines the client-identity (and user-id).
+		eAuthMode := E_OCPP1_AuthenticationMode.Basic, // Defines an optional authentication-mode.
+		sAuthKey := 'abcdef', // Defines an optional authentication key.
+		eEncryptionMode := E_OCPP_EncryptionMode.None, // Defines an optional encryption mode.
+		eTraceLevel := TcTraceLevel.tlVerbose); // Defines the maximum trace level of ADS log messages.
+
+	stOptions : ST_OCPP1_ClientOptions := (
+		bAllowOfflineTxForUnknownId := FALSE, // Whether Unknown Offline Authorization is enabled.
+		bAuthListEnabled := FALSE, // Whether the Local Authorization List is enabled.
+		bAuthCacheEnabled := FALSE, // Whether the Authorization Cache is enabled.
+		bLocalAuthOffline := FALSE, // Whether the Charge Point, when offline, will start a transaction for locally-authorized identifiers.
+		bLocalPreAuth := FALSE); // Whether the Charge Point, when online, will start a transaction for locally-authorized identifiers without waiting for an response from the Central System.
+
+	stSettings : ST_OCPP1_ClientSettings := (
+		nTransactionMessageAttempts := 5, // How often the Charge Point should try to submit a transaction-related message when the Central System fails to process it.
+		nTransactionMessageRetryInterval := 5); // [s] How long the Charge Point should wait before resubmitting a transaction-related message that the Central System failed to process.
+
+	stBootInfo : ST_OCPP1_ClientBootInfo := (
+		sChargePointModel := 'TcIotOcppClient', // Required. This contains a value that identifies the model of the ChargePoint.
+		sChargePointVendor := 'Beckhoff Automation', // Required. This contains a value that identifies the vendor of the ChargePoint.
+		sChargeBoxSerialNumber := '', // Optional. This contains a value that identifies the serial number of the Charge Box inside the Charge Point.
+		sChargePointSerialNumber := '', // Optional. This contains a value that identifies the serial number of the Charge Point.
+		sFirmwareVersion := '', // Optional. This contains the firmware version of the Charge Point.
+		sMeterSerialNumber := '', // Optional. This contains the serial number of the main electrical meter of the Charge Point.
+		sMeterType := ''); // Optional. This contains the type of the main electrical meter of the Charge Point.
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

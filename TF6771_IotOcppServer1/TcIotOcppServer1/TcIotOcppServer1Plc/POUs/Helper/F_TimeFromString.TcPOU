@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_TimeFromString" Id="{d84117b3-d38d-4228-b42e-ab885218d446}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION F_TimeFromString : LINT
+VAR_INPUT
+	sTime : STRING(31);
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[F_TimeFromString :=  ULINT_TO_LINT(DCTIME64_TO_FILETIME64(STRING_TO_DCTIME64(sTime)));]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

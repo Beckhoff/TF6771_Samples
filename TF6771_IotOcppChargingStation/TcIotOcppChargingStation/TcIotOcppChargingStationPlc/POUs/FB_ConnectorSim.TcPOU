@@ -1,0 +1,95 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_ConnectorSim" Id="{9dc928ae-5f48-4fd9-b3f6-9b6c283cf17e}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_ConnectorSim
+VAR_INPUT
+	sIdTag : T_OCPP1_IdToken := '1234abcd';
+	bAuto : BOOL; // automatic start/stop of charging
+	bAuth : BOOL; // authorize token (e.g. from RFID)
+	bPlug : BOOL; // cable from EV connected to EVSE
+	bStart : BOOL; // start transaction for charging
+	bStop : BOOL; // stop transaction of charging
+	fCurrentOffered : REAL; // [A] limitation of offered current
+	tWaitStart : TIME := T#1M10S; // wait time to start transaction in auto mode
+	tWaitCharge : TIME := T#3M45S; // wait time to charge and stop transaction in auto mode
+END_VAR
+VAR_IN_OUT
+	fbConnector : FB_Connector;
+END_VAR
+VAR
+	nState : BYTE;
+	tonDelay : TON;
+	tonLocked : TON;
+	tonOffering : TON;
+	tonCharging : TON;
+	trigDisconnect : F_TRIG;
+	fPowerOffered : REAL; // [W]
+END_VAR
+VAR PERSISTENT
+	fEnergyMeterIntegrator : REAL; // [Wh] meter value of charged energy
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[CASE nState OF
+	0: // init => wait
+		IF bAuto THEN
+			tonDelay(IN := FALSE);
+			nState := 1;
+		END_IF
+	1: // wait => start
+		tonDelay(IN := TRUE, PT := tWaitStart);
+		IF tonDelay.Q THEN
+			bPlug := TRUE;
+			bStart := TRUE;
+			tonDelay(IN := FALSE);
+			nState := 2;
+		END_IF
+	2: // charge => stop
+		tonDelay(IN := TRUE, PT := tWaitCharge);
+		IF tonDelay.Q THEN
+			bPlug := FALSE;
+			bStop := TRUE;
+			tonDelay(IN := FALSE);
+			nState := 1;
+		END_IF
+ELSE
+	nState := 0;
+END_CASE
+
+fbConnector.bOperative := TRUE;
+fbConnector.sIdTag := sIdTag;
+
+fbConnector.bAuth := bAuth;
+fbConnector.bConnected := bPlug;
+fbConnector.bStart := bStart;
+fbConnector.bStop := bStop;
+
+tonLocked(IN := fbConnector.bLock, PT := T#500MS, Q => fbConnector.bLocked);
+tonOffering(IN := fbConnector.bSupply, PT := T#500MS, Q => fbConnector.bOffering);
+tonCharging(IN := fbConnector.bSupply, PT := T#2S, Q => fbConnector.bCharging);
+
+IF fCurrentOffered > fbConnector.fChargeLimit THEN
+	fCurrentOffered := fbConnector.fChargeLimit; // [A] limited by charging profile
+END_IF
+
+IF tonCharging.Q THEN
+	fPowerOffered := fCurrentOffered * 3.0 * 230.0 / 3600.0; // [W/s] charging power at three phases with 230V
+	fEnergyMeterIntegrator := fEnergyMeterIntegrator + fPowerOffered * 0.01; // [Wh] charging energy meter at 10ms cycle time
+	fbConnector.nEnergyMeter := LREAL_TO_UDINT(fEnergyMeterIntegrator);
+END_IF
+
+trigDisconnect(CLK := fbConnector.bLock);
+IF trigDisconnect.Q THEN
+	fbConnector.bConnected := FALSE;
+END_IF
+
+bAuth := FALSE;
+IF bStart AND fbConnector.bCharging THEN
+	bStart := FALSE;
+END_IF
+IF bStop AND NOT fbConnector.bCharging THEN
+	bStop := FALSE;
+END_IF
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
