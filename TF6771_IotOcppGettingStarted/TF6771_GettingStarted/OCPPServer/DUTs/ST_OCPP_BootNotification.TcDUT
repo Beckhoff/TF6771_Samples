@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_OCPP_BootNotification" Id="{96883093-f7de-4794-b827-3a71319951f0}">
+    <Declaration><![CDATA[TYPE ST_OCPP_BootNotification :
+STRUCT
+	sModel 				: STRING(31);
+	sVendor 			: STRING(31);
+	sChargeBoxSerial 	: STRING(31);
+	sChargePointSerial 	: STRING(31);
+	sFirmwareVersion 	: STRING(63);
+	sMeterSerial 		: STRING(31);
+	sMeterType 			: STRING(31);
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

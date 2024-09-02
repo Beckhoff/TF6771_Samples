@@ -1,0 +1,120 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="MAIN" Id="{398c3411-0fd1-45e3-9985-94ebe351f23a}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	// Client param
+	stClientParam 	: ST_OCPP1_ClientParam :=(sHost:='127.0.0.1', nPort:=8080, sIdentity:='TestIdent',sPath:='ocpp',eDebugLevel:=E_OCPP_DebugLevel.MessageLogFile, eTraceLevel:=TcTraceLevel.tlVerbose); 
+	fbClient 		: FB_OCPP1_Client(stClientParam);
+	eAction 		: E_OCPP1_Action;
+	hMessageId 		: T_OCPP_MessageId;
+		
+	// Status notification
+	bSendStatus		: BOOL;
+	eError			: E_OCPP1_ChargePointError;
+	eStatus			: E_OCPP1_ChargePointStatus;
+
+	// Authorize
+	stIdTagInfo		: ST_OCPP1_IdTagInfo;
+	sIdTag			: T_OCPP1_IdToken:='Test123';
+	
+	// Start transaction
+	nConnectorId	: UDINT;
+	nMeterStart		: UDINT;
+	nTransactionId	: UDINT;
+	
+	//Stop transaction
+	nMeterStop		: UDINT;
+	
+	// Charging sample
+	nState			: INT;
+	bStartCharging	: BOOL;
+	bAuthorized		: BOOL;
+	bChargingStarted: BOOL;
+	bChargingStopped: BOOL;
+	timerCharge		: TON:=(PT:=T#10S);
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Charging sample
+CASE nState OF
+	0: 
+		IF bStartCharging THEN
+			bStartCharging:=FALSE;
+			eAction:=E_OCPP1_Action.Authorize;
+			nState:=nState+1;
+		END_IF
+	1:	
+		IF bAuthorized THEN
+			bAuthorized:=FALSE;
+			nMeterStart:=nMeterStop;
+			eAction:=E_OCPP1_Action.StartTransaction;
+			nState:=nState+1;
+		END_IF
+	2:
+		IF bChargingStarted THEN
+			//10 seconds charging simulation
+			timerCharge(IN:=TRUE);
+			IF timerCharge.Q THEN
+				bChargingStarted:=FALSE;
+				timerCharge(IN:=FALSE);
+				nMeterStop:=nMeterStart+10;
+				eAction:=E_OCPP1_Action.StopTransaction;
+				nState:=nState+1;
+			END_IF
+		END_IF
+	3: 	
+		IF bChargingStopped THEN
+			bChargingStopped:=FALSE;
+			nState:=0;
+		END_IF
+END_CASE
+
+// Send StatusNotification
+IF bSendStatus THEN
+	bSendStatus:=FALSE;
+	eError:=E_OCPP1_ChargePointError.HighTemperature;
+	eStatus:=E_OCPP1_ChargePointStatus.SuspendedEV;
+	eAction:=E_OCPP1_Action.StatusNotification;
+END_IF
+
+// Different OCPP commands implemented for OCPP client
+CASE eAction OF
+	E_OCPP1_Action.None:
+		IF NOT fbClient.bError AND fbClient.bValid THEN 
+			fbClient.PollRequest(hMessageId=> hMessageId, eAction=> eAction );
+		ELSE 
+			// Implement error handling here		
+		END_IF		
+	E_OCPP1_Action.Authorize:
+		IF fbClient.SendAuthorize(sIdTag:=sIdTag, eStatus => stIdTagInfo.eStatus) THEN
+			IF stIdTagInfo.eStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+				bAuthorized :=TRUE ;
+				eAction	:= E_OCPP1_Action.None;
+			END_IF
+		END_IF
+	E_OCPP1_Action.StartTransaction:
+		IF fbClient.SendStartTransaction(sIdTag:=sIdTag, nConnectorId:=nConnectorId, nMeterStart:=nMeterStart, eStatus => stIdTagInfo.eStatus, nTransactionId => nTransactionId) THEN
+			IF stIdTagInfo.eStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
+				bChargingStarted := TRUE;
+				eAction	:= E_OCPP1_Action.None;
+			END_IF
+		END_IF
+	E_OCPP1_Action.StopTransaction:
+		IF fbClient.SendStopTransaction(nConnectorId:=nConnectorId, nMeterStop:=nMeterStop, eStatus => stIdTagInfo.eStatus) THEN
+			bChargingStopped := TRUE;
+			eAction	:= E_OCPP1_Action.None;
+		END_IF
+	E_OCPP1_Action.StatusNotification:
+		IF fbClient.SendStatusNotification(nConnectorId:=nConnectorId, eError, eStatus) THEN
+			eAction	:= E_OCPP1_Action.None;
+		END_IF
+	// Implement here more functionalities like: 
+	// E_OCPP1_Action.TriggerMessage:
+ELSE
+	eAction := E_OCPP1_Action.None;
+	// not implemented... 
+END_CASE]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

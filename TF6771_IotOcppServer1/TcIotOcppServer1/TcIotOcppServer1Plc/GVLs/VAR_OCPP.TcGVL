@@ -1,0 +1,38 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <GVL Name="VAR_OCPP" Id="{159deec2-9cfb-47c6-83bb-6aa8b11f2123}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL
+	arrAuthList : ARRAY[1..nAuthListMax] OF ST_OCPP1_AuthorizationData := [
+		( sIdTag := '1234abcd', stIdTagInfo := ( eStatus := E_OCPP1_AuthorizationStatus.Accepted ) ),
+		( sIdTag := 'B45E00EE', stIdTagInfo := ( eStatus := E_OCPP1_AuthorizationStatus.Accepted ) ),
+		( sIdTag := 'A46FF2F1', stIdTagInfo := ( eStatus := E_OCPP1_AuthorizationStatus.Accepted ) )
+	];
+
+	stServerParam : ST_OCPP1_ServerParam := (
+		//nOID := 16#01010010); // ObjectID of the TcIotOcpp Client Object (0 to create a new instance).
+		nTaskOID := 0, // ObjectId of the Task whose shall execute the client (0 to use I/O Idle Task)
+		sHost := '0.0.0.0', // Defines the server-address by host-name, domain-name or IP-address.
+		nPort := 8080, // Defines the server-port.
+		sPath := 'ocpp', // Defines the server-path.
+
+		eAuthMode := E_OCPP1_AuthenticationMode.None, // Defines an optional authentication-mode.
+		//eAuthMode := E_OCPP1_AuthenticationMode.Basic, // Defines an optional authentication-mode.
+
+		eEncryptionMode := E_OCPP_EncryptionMode.None, // Defines an optional encryption mode.
+		//eEncryptionMode := E_OCPP_EncryptionMode.ServerCertificate, // Defines an optional encryption mode.
+		//eEncryptionProt := E_OCPP_EncryptionProtocol.TLSv1p2, // Defines the encryption protocol.
+		//sCaFile := '%TC_TARGETPATH%\Certificates\CA.crt', // Certificate of the certificate authority (CA) as filename (PEM or DER format).
+		//sCrtFile := '%TC_TARGETPATH%\Certificates\OCPP.crt', // Certificate of the server (public key) as filename (PEM or DER format)
+		//sKeyFile := '%TC_TARGETPATH%\Certificates\OCPP.key', // Key of the server (private key) as filename (PEM or DER format).
+
+		eTraceLevel := TcTraceLevel.tlVerbose); // Defines the maximum trace level of ADS log messages
+END_VAR
+VAR_GLOBAL CONSTANT
+	nAuthListMax : UDINT := 3;
+
+	sIdTag : T_OCPP1_IdToken := '1234abcd';
+	nReservationId : UDINT := 1234;
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

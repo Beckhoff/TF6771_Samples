@@ -1,0 +1,86 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="MAIN" Id="{3dde315f-5629-4794-b976-76c30e875f40}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	// Server param
+	stServerParam 		: ST_OCPP1_ServerParam := (nPort:=8080,eAuthMode:=E_OCPP1_AuthenticationMode.None, eEncryptionMode := E_OCPP_EncryptionMode.None,eDebugLevel:=E_OCPP_DebugLevel.MessageLogFile, eTraceLevel:=TcTraceLevel.tlVerbose);
+	fbOcppServer		: FB_OCPP1_Server(stServerParam);
+	eAction 			: E_OCPP1_Action;
+	hMessageId 			: T_OCPP_MessageId;
+	hStationId			: UDINT;
+	
+	// Boot notification
+	stBootNotification  : ST_OCPP_BootNotification;
+	
+	// Authorize
+	sIdTag				: T_OCPP1_IdToken;
+	
+	// Transactions
+	nConnectorId		: UDINT;
+	nMeterStart			: UDINT;
+	nMeterStop			: UDINT;
+	nTimestamp			: ULINT;
+	nTransactionId		: UDINT;
+	nTransactionIdRecv	: UDINT;
+	eReason				: E_OCPP1_Reason;
+	
+	// Status notification
+	nConnectorIdStatus	: UDINT;
+	eError				: E_OCPP1_ChargePointError;
+	eStatus				: E_OCPP1_ChargePointStatus;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[CASE eAction OF
+	E_OCPP1_Action.None:
+		IF NOT fbOcppServer.bError AND fbOcppServer.bValid THEN
+			fbOcppServer.PollRequest(eAction => eAction, hMessageId => hMessageId, hStationId => hStationId);
+		ELSE
+			// Implement error handling here
+		END_IF
+	E_OCPP1_Action.BootNotification:
+		IF fbOcppServer.RecvBootNotification(hStationId, hMessageId=>hMessageId, 			
+			sModel				=> stBootNotification.sModel,
+			sVendor				=> stBootNotification.sVendor,
+			sChargeBoxSerial	=> stBootNotification.sChargeBoxSerial,
+			sChargePointSerial	=> stBootNotification.sChargePointSerial,
+			sFirmwareVersion	=> stBootNotification.sFirmwareVersion,
+			sMeterSerial		=> stBootNotification.sMeterSerial,
+			sMeterType			=> stBootNotification.sMeterType)
+		THEN
+			fbOcppServer.RespBootNotification(hStationId, hMessageId, E_OCPP1_RegistrationStatus.Accepted);
+			eAction := E_OCPP1_Action.None;
+		END_IF
+	E_OCPP1_Action.Heartbeat:
+		IF fbOcppServer.RecvHeartbeat(hMessageId => hMessageId, hStationId) THEN
+			fbOcppServer.RespHeartbeat(hStationId:=hStationId,hMessageId:=hMessageId);
+			eAction := E_OCPP1_Action.None;
+		END_IF
+	E_OCPP1_Action.Authorize:
+		IF fbOcppServer.RecvAuthorize(hStationId, sIdTag => sIdTag, hMessageId => hMessageId) THEN
+			IF sIdTag='Test123' THEN
+				fbOcppServer.RespAuthorize(hStationId:=hStationId, hMessageId:=hMessageId, E_OCPP1_AuthorizationStatus.Accepted);
+				eAction := E_OCPP1_Action.None;
+			END_IF
+		END_IF
+	E_OCPP1_Action.StartTransaction:
+		IF fbOcppServer.RecvStartTransaction(hStationId, hMessageId => hMessageId, sIdTag => sIdTag, nConnectorId => nConnectorId, nMeterStart => nMeterStart, nTimestamp => nTimestamp) THEN
+			nTransactionId:=nTransactionId+1;
+			fbOcppServer.RespStartTransaction(hStationId, hMessageId, E_OCPP1_AuthorizationStatus.Accepted, nTransactionId:=nTransactionId);
+			eAction := E_OCPP1_Action.None;
+		END_IF
+	E_OCPP1_Action.StopTransaction:
+		IF fbOcppServer.RecvStopTransaction(hStationId, hMessageId => hMessageId, sIdTag => sIdTag, nTransactionId => nTransactionIdRecv, nConnectorId => nConnectorId, nMeterStop => nMeterStop, nTimestamp => nTimestamp, eReason => eReason) THEN
+			fbOcppServer.RespStopTransaction(hStationId, hMessageId, E_OCPP1_AuthorizationStatus.Accepted);
+			eAction := E_OCPP1_Action.None;
+		END_IF
+	E_OCPP1_Action.StatusNotification:
+		IF fbOcppServer.RecvStatusNotification(hStationId, hMessageId => hMessageId, nConnectorId => nConnectorIdStatus, eError => eError, eStatus => eStatus) THEN
+			fbOcppServer.RespStatusNotification(hStationId, hMessageId);
+			eAction := E_OCPP1_Action.None;
+		END_IF
+END_CASE]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

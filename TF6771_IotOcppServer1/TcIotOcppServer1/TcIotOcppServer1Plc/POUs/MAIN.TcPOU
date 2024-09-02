@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="MAIN" Id="{de8106da-848b-45a1-9ce3-abd3cf68b67b}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	fbServer : FB_Server(VAR_OCPP.stServerParam);
+
+	fbStation : FB_Station('Test', '83fb675f3f88fb384ae20e70e4c101b780f0a2c171749299b7af6805c234f2eb', fbServer); // Test:abcdef
+	fbStation01 : FB_Station('Test01', '083bb79c338a0d6dd768b46ca7a320d56c270e15236e30b4f0007d75bcbeb20e', fbServer); // Test01:abcdef
+	fbStation02 : FB_Station('Test02', '70bf8db192a798cd72cc3b657627f9e712d96ea615caeea6898f2b5b83793f4f', fbServer); // Test02:abcdef
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbStation.Execute();
+fbStation01.Execute();
+fbStation02.Execute();
+fbServer.Execute();]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

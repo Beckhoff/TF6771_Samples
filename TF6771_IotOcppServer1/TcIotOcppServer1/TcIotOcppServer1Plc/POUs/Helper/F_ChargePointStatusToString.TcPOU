@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_ChargePointStatusToString" Id="{01f142c5-1a8a-4010-a5bb-66664228919d}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION F_ChargePointStatusToString : STRING(31)
+VAR_INPUT
+	eStatus : E_OCPP1_ChargePointStatus;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[CASE eStatus OF
+	E_OCPP1_ChargePointStatus.Available: F_ChargePointStatusToString := 'Available';
+	E_OCPP1_ChargePointStatus.Preparing: F_ChargePointStatusToString := 'Preparing';
+	E_OCPP1_ChargePointStatus.Charging: F_ChargePointStatusToString := 'Charging';
+	E_OCPP1_ChargePointStatus.SuspendedEVSE: F_ChargePointStatusToString := 'SuspendedEVSE';
+	E_OCPP1_ChargePointStatus.SuspendedEV: F_ChargePointStatusToString := 'SuspendedEV';
+	E_OCPP1_ChargePointStatus.Finishing: F_ChargePointStatusToString := 'Finishing';
+	E_OCPP1_ChargePointStatus.Reserved: F_ChargePointStatusToString := 'Reserved';
+	E_OCPP1_ChargePointStatus.Unavailable: F_ChargePointStatusToString := 'Unavailable';
+	E_OCPP1_ChargePointStatus.Faulted: F_ChargePointStatusToString := 'Faulted';
+END_CASE]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
