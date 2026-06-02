@@ -1,0 +1,76 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.12">
+  <POU Name="MAIN" Id="{5caaaa48-6ec6-4e41-a93d-731b38b1e39f}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+// ┌──────────────┐       ┌────────────────────┐       ┌──────────┐
+// │              │       │                    │       │          │
+// │   Charging   │       │        Proxy       │       │   OCPP   │
+// │ Station (CS) │◄─────►│ Station <-> Client │◄─────►│  Server  │
+// │              │       │                    │       │  (CSMS)  │
+// └──────────────┘       └────────────────────┘       └──────────┘
+VAR
+	
+	stServerParam : ST_OCPP1_ServerParam := ( 
+		//nOID 				:= 16#01010010); 							// ObjectID of the TcIotOcpp Client Object (0 to create a new instance).
+		nTaskOID 			:= 16#02010030, 							// ObjectId of the Task whose shall execute the client (0 to use I/O Idle Task)
+		sHost 				:= 'localhost', 							// Defines the server-address by host-name, domain-name or IP-address.
+		nPort 				:= 9080, 									// Defines the server-port.
+		sPath 				:= 'ocpp', 									// Defines the server-path.
+		eAuthMode 			:= E_OCPP1_AuthenticationMode.None, 		// Defines an optional authentication-mode.
+		eEncryptionMode 	:= E_OCPP_EncryptionMode.None, 				// Defines an optional encryption mode.
+		sCaFile 			:= '%TC_TARGETPATH%\Certificates\CA.crt', 	// Certificate of the certificate authority (CA) as filename (PEM or DER format).
+		sCrtFile 			:= '%TC_TARGETPATH%\Certificates\OCPP.crt', // Certificate of the server (public key) as filename (PEM or DER format)
+		sKeyFile 			:= '%TC_TARGETPATH%\Certificates\OCPP.key', // Key of the server (private key) as filename (PEM or DER format).
+		eDebugLevel 		:= E_OCPP_DebugLevel.None,					// Defines the debug level
+		eTraceLevel 		:= TcTraceLevel.tlWarning); 				// Defines the maximum trace level of ADS log messages
+		
+	sIdent1 : T_OCPP_Identity := 'ChargingStation01';					// Client Ident from CS
+	tConnectionTimeOut: TIME  := T#5S;
+	sAuthHash: T_OCPP_Hash    := '2f20aa42275837973ed8f3726bb2709e0a9e476da9c42da38ac113de818d0dbf';
+	
+	// ClientParam for LOCAL Client
+	stClientParam : ST_OCPP1_ClientParam := ( 
+		sHost		:= '192.0.2.1', 									// Defines the server-address by host-name, domain-name or IP-address.
+		nPort		:= 8080, 											// Defines the server-port.
+		sPath		:= 'ocpp', 											// Defines the server-path
+	    sIdentity	:= sIdent1, 							    		// Defines the client-identity (and user-id).
+		bConnect 	:= FALSE,											// Automatically connect to server.
+	    eAuthMode	:= E_OCPP1_AuthenticationMode.None, 				// Defines an optional authentication-mode
+		sAuthKey	:= 'abcdef', 										// Defines an optional authentication key.
+		eEncryptionMode	:= E_OCPP_EncryptionMode.None, 					// Defines an optional encryption mode
+		eEncryptionProt	:= E_OCPP_EncryptionProtocol.None,				// Defines the encryption protocol.
+		sCaFile 	:= '%TC_TARGETPATH%\Certificates\CA.crt',			// Certificate of the certificate authority (CA) as filename (PEM or DER format).
+	    sCrtFile 	:= '%TC_TARGETPATH%\Certificates\OCPP.crt',			// Certificate of the server (public key) as filename (PEM or DER format)
+		sKeyFile 	:= '%TC_TARGETPATH%\Certificates\OCPP.key',			// Key of the server (private key) as filename (PEM or DER format).
+	    eDebugLevel := E_OCPP_DebugLevel.None,							// Defines the debug level.
+	    eTraceLevel := tlWarning);										// Defines the maximum trace level of ADS log messages
+END_VAR
+VAR	
+	fbServer : FB_OCPP1_Server(stParam := stServerParam);
+	// sIdent for the Proxy Client - in this case, the same identity as the Charging Station
+	fbProxy : FB_Proxy(fbServer := fbServer, stClientParam := stClientParam, stBootInfo := VAR_OCPP_Pers.stBootProxy1, sIdent := sIdent1, sAuthHash := sAuthHash,tConnectionTimeout := tConnectionTimeOut, bInitBoot := VAR_OCPP_Pers.bInitBootProxy1);
+	//fbProxy2 : FB_Proxy(fbServer := fbServer, stClientParam := stClientParam2, stBootInfo := VAR_OCPP_Pers.stBootProxy2, sIdent := sIdent2, sAuthHash := sAuthHash2,tConnectionTimeout := tConnectionTimeOut2, bInitBoot := VAR_OCPP_Pers.bInitBootProxy2);
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Before working with the ProxySample, you should be familiar with the TF6771_IotOcppClient1 and TF6771_IotOcppServer1 sample.
+
+(*
+General notes:
+	- Only the forwarding of messages is implemented in this ProxySample.
+	- Define the ProxyServer and ProxyClient in the MAIN
+	- Only one fbServer required
+	- One fbProxy per client 
+	- Add persisting BootNotification and InitBoot variables for each Client in VAR_OCPP_Pers
+	- Everything runs in fbProxy.Execute()
+		+One switch Case for ClientAction (ClientRecv-Method) - triggered by CSMS
+		+One switch Case for StationAction (StationRecv-Method) - triggered by CS
+		+Reset of the client and station in case of error must be triggered manually in the sample
+		+Reconnection of the client is implemented automatically 
+	- Connection establishment:
+		waiting for BootNotification from CS -> Client sends BootNotification to CSMS -> CSMS accepts -> Station accepts
+*)
+
+fbProxy.Execute();]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

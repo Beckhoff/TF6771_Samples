@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<TcSmProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.beckhoff.com/schemas/2012/07/TcSmProject" TcSmVersion="1.0" TcVersion="3.1.4026.10">
+<TcSmProject xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.beckhoff.com/schemas/2012/07/TcSmProject" TcSmVersion="1.0" TcVersion="3.1.4026.15">
 	<Project ProjectGUID="{C6D19FDA-D511-41C0-B051-EB0F2C2FCDD7}" Target64Bit="true" SaveToTarget="false" HideSaveToTarget="true" ShowHideConfigurations="#x3c7">
 		<System>
 			<Tasks>
@@ -10,7 +10,7 @@
 		</System>
 		<Plc>
 			<Project GUID="{17215BFB-06DD-434D-9237-0A9B806BE215}" Name="TcIotOcppClient1Plc" PrjFilePath="TcIotOcppClient1Plc\TcIotOcppClient1Plc.plcproj" TmcFilePath="TcIotOcppClient1Plc\TcIotOcppClient1Plc.tmc" ReloadTmc="true" AmsPort="851" TargetArchiveSettings="#x0001" FileArchiveSettings="#x0002" SymbolicMapping="true">
-				<Instance Id="#x08502000" TcSmClass="TComPlcObjDef" KeepUnrestoredLinks="2" TmcHash="{09BB16B3-E327-CB8B-D12B-CA12066B8011}" TmcPath="TcIotOcppClient1Plc\TcIotOcppClient1Plc.tmc">
+				<Instance Id="#x08502000" TcSmClass="TComPlcObjDef" KeepUnrestoredLinks="2" TmcHash="{15B91B76-5EFD-A781-C513-9ADC4B5D4A6D}" TmcPath="TcIotOcppClient1Plc\TcIotOcppClient1Plc.tmc">
 					<Name>TcIotOcppClient1Plc Instance</Name>
 					<CLSID ClassFactory="TcPlc30">{08500001-0000-0000-F000-000000000064}</CLSID>
 					<Contexts>

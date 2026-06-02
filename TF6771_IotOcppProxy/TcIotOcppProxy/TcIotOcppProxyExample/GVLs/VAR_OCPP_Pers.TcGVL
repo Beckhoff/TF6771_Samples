@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.11">
+  <GVL Name="VAR_OCPP_Pers" Id="{cb19ebf2-3c21-45ea-956d-40e5e53e98bf}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL PERSISTENT
+	// each Proxy instance needs its own ST_OCPP1_ClientBootInfo and bInitBoot
+	stBootProxy1 	: ST_OCPP1_ClientBootInfo;
+	bInitBootProxy1	: BOOL; 
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

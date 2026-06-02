@@ -5,7 +5,7 @@
 VAR
 	// Client param
 	stClientParam 	: ST_OCPP1_ClientParam :=(sHost:='127.0.0.1', nPort:=8080, sIdentity:='TestIdent',sPath:='ocpp',eDebugLevel:=E_OCPP_DebugLevel.MessageLogFile, eTraceLevel:=TcTraceLevel.tlVerbose); 
-	fbClient 		: FB_OCPP1_Client(stClientParam);
+	fbClient 		: FB_OCPP1_Client(stClientParam, 0, 0);
 	eAction 		: E_OCPP1_Action;
 	hMessageId 		: T_OCPP_MessageId;
 		

@@ -9,13 +9,20 @@
     <WriteProductVersion>false</WriteProductVersion>
     <GenerateTpy>false</GenerateTpy>
     <Name>OCPPServer</Name>
-    <ProgramVersion>3.1.4026.8</ProgramVersion>
+    <ProgramVersion>3.1.4026.16</ProgramVersion>
     <Application>{1386f000-aff9-4fa8-b811-b28d4cded1b2}</Application>
     <TypeSystem>{103cf8e0-b1c6-4210-8b75-d7620faa6393}</TypeSystem>
     <Implicit_Task_Info>{609ce7a2-3763-44f2-9b15-a365818ee0dc}</Implicit_Task_Info>
     <Implicit_KindOfTask>{9f23ba50-b05f-4b75-a270-c08e9a66337e}</Implicit_KindOfTask>
     <Implicit_Jitter_Distribution>{28007672-2bcf-4132-8b0b-61c369ce44d0}</Implicit_Jitter_Distribution>
     <LibraryReferences>{8c3988ed-3402-4364-8e8d-f37bf220a4a3}</LibraryReferences>
+    <Company>Beckhoff Automation GmbH &amp; Co. KG</Company>
+    <Released>false</Released>
+    <AllowChecksForLibrary>false</AllowChecksForLibrary>
+    <POUsForPropertyAccessIncluded>false</POUsForPropertyAccessIncluded>
+    <GlobalVersionStructureIncluded>false</GlobalVersionStructureIncluded>
+    <Title>TwinCAT IoT OCPP Server GettingStarted</Title>
+    <ProjectVersion>1.0.3.0</ProjectVersion>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="DUTs\ST_OCPP_BootNotification.TcDUT">

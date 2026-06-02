@@ -5,15 +5,15 @@
 VAR
 	fbServer : FB_Server(VAR_OCPP.stServerParam);
 
-	fbStation : FB_Station('Test', '83fb675f3f88fb384ae20e70e4c101b780f0a2c171749299b7af6805c234f2eb', fbServer); // Test:abcdef
-	fbStation01 : FB_Station('Test01', '083bb79c338a0d6dd768b46ca7a320d56c270e15236e30b4f0007d75bcbeb20e', fbServer); // Test01:abcdef
-	fbStation02 : FB_Station('Test02', '70bf8db192a798cd72cc3b657627f9e712d96ea615caeea6898f2b5b83793f4f', fbServer); // Test02:abcdef
+	fbStation01 : FB_Station('ChargingStation01', '2f20aa42275837973ed8f3726bb2709e0a9e476da9c42da38ac113de818d0dbf', fbServer); // ChargingStation01:abcdef
+	fbStation02 : FB_Station('ChargingStation02', '5c55b2828abee6bb262ed0505d53d0baa947e050825ef00e7d3432b722177480', fbServer); // ChargingStation02:abcdef
+	//fbStation03 : FB_Station('ChargingStation03', 'f207afc2a29d076265649b050ff3f6449b03dc6d04620e269a17cb31584a4471', fbServer); // ChargingStation03:abcdef
 END_VAR]]></Declaration>
     <Implementation>
-      <ST><![CDATA[fbStation.Execute();
-fbStation01.Execute();
+      <ST><![CDATA[fbStation01.Execute();
 fbStation02.Execute();
-fbServer.Execute();]]></ST>
+fbServer.Execute();
+]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>

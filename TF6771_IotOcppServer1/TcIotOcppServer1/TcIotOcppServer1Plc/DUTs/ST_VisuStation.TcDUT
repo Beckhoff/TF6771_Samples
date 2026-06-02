@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_VisuStation" Id="{386816b5-bd92-03c1-2ba1-d8152f528d2d}">
+    <Declaration><![CDATA[TYPE ST_VisuStation :
+STRUCT
+	sIdent : T_OCPP_Identity; 
+	stBoot : ST_OCPP1_ClientBootInfo; 
+	aConnector : ARRAY [0 .. Tc3_Ocpp.Param_OCPP.nConnectorCount] OF ST_Connector; 
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

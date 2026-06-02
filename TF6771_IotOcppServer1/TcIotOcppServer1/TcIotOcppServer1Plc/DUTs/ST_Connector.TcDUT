@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_Connector" Id="{8ec71850-b813-09f0-2360-ba775cfce055}">
+    <Declaration><![CDATA[TYPE ST_Connector :
+STRUCT
+	sIdTag 				: T_OCPP1_IdToken;
+	nReservationId 		: UDINT;
+	sStartTime 			: STRING(255);
+	sAuthorizationStatus : E_OCPP1_AuthorizationStatus;
+	sStopTime 			: STRING(255);
+	nTransactionID 		: UDINT; 
+	nMeterStart 		: UDINT; // Wh
+	nMeterStop 			: UDINT; // Wh 
+	sChargpointStatus 	: STRING(31); 
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

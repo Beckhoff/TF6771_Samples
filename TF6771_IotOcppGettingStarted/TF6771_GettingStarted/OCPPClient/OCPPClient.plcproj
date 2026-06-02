@@ -9,13 +9,20 @@
     <WriteProductVersion>false</WriteProductVersion>
     <GenerateTpy>false</GenerateTpy>
     <Name>OCPPClient</Name>
-    <ProgramVersion>3.1.4026.8</ProgramVersion>
+    <ProgramVersion>3.1.4026.16</ProgramVersion>
     <Application>{21970440-b324-4cd7-b3d4-6793c1c5ae2a}</Application>
     <TypeSystem>{85c2b2aa-a826-4b72-be4b-c2cecec86154}</TypeSystem>
     <Implicit_Task_Info>{6af6f662-d5a9-4562-9ac6-82aa52cd0139}</Implicit_Task_Info>
     <Implicit_KindOfTask>{053647fd-8e6b-45a0-a2f4-6d3c7348ebc2}</Implicit_KindOfTask>
     <Implicit_Jitter_Distribution>{b77bc980-50b6-4784-b890-0f124f00b5da}</Implicit_Jitter_Distribution>
     <LibraryReferences>{72c101cc-14fe-4e05-9b85-b9caf016e058}</LibraryReferences>
+    <Company>Beckhoff Automation GmbH &amp; Co. KG</Company>
+    <Released>false</Released>
+    <AllowChecksForLibrary>false</AllowChecksForLibrary>
+    <POUsForPropertyAccessIncluded>false</POUsForPropertyAccessIncluded>
+    <GlobalVersionStructureIncluded>false</GlobalVersionStructureIncluded>
+    <Title>TwinCAT IoT OCPP Client GettingStarted</Title>
+    <ProjectVersion>1.0.3.0</ProjectVersion>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="PlcTask.TcTTO">

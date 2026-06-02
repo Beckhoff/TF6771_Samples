@@ -1,0 +1,132 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_ChargingSimu_AC" Id="{7a418f18-4f64-0257-0aa6-40a9444aa4a4}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_ChargingSimu_AC
+VAR_INPUT
+	fStartSoC				: LREAL;			// Initial state of charge [%]
+	fBatteryCapacity_kWh	: LREAL;			// Battery capacity [kWh]
+	fRequestedCurrentFromEV	: LREAL; 			// [A]
+	ePhase 					: E_Phase := E_Phase.L123;	// used phases (1 or 3)
+	fCurrentLimit_A			: LREAL := 16.0; 	// current limit [A] (defaulte 16A)
+	bStartCharging			: BOOL; 			// charging active
+	bPlug 					: BOOL;				// if False -> reset Values 
+	fCycleTime				: LREAL := 0.01; 	// CycleTime [s]
+END_VAR
+VAR_IN_OUT
+	fEnergyMeter			: LREAL; 			// [Wh] meter value of charged energy
+END_VAR
+VAR_OUTPUT
+	fStateOfCharge				: LREAL; 		// Current state of charge [%]
+	fChargedEnergy_kWh 			: LREAL; 		// Total energy charged [kWh]
+	fChargingDuration_s 		: LREAL; 		// Total charging time [s]
+	tRemainingTime_s 			: Time; 		// Estimated time to 100% [s]
+
+	fVoltageL1N : LREAL := -1.0; // [V] Instantaneous AC RMS supply voltage
+	fVoltageL2N : LREAL := -1.0; // [V] Instantaneous AC RMS supply voltage
+	fVoltageL3N : LREAL := -1.0; // [V] Instantaneous AC RMS supply voltage
+
+	fCurrentImportL1 : LREAL := -1.0; // [A] Instantaneous current flow to EV
+	fCurrentImportL2 : LREAL := -1.0; // [A] Instantaneous current flow to EV
+	fCurrentImportL3 : LREAL := -1.0; // [A] Instantaneous current flow to EV
+
+	fEffectiveChargingPower_kW 	: LREAL; 		// Actual charging power [kW]
+	tChargingTime 				: TIME;
+END_VAR
+VAR
+	fVoltage_V			: LREAL := 230.0; 	// Voltage per phase [V]
+	fCurrent_A 			: LREAL; 			// Current per phase [A]
+	nPhaseCount 		: UDINT; 
+	fDeltaEnergy_kWh 	: LREAL;
+	nState 				: UDINT := 0; 
+	fPower 				: LREAL; 			// [W/s] charging power at x phases with 230V
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fVoltageL1N := fVoltageL2N := fVoltageL3N := fVoltage_V; 
+
+CASE nState OF 
+	0: // init 
+		IF bPlug THEN 
+			nState := 20; 
+		ELSE 
+			fStateOfCharge 		:= 0; 	
+			fChargedEnergy_kWh 	:= 0; 
+			fChargingDuration_s := 0; 
+			tRemainingTime_s 	:= T#0S; 
+			fEffectiveChargingPower_kW := 0;
+			tChargingTime 		:= T#0S; 
+		END_IF
+	20: // charging 
+		IF bStartCharging THEN 
+			IF ePhase = E_Phase.L123 THEN 
+				nPhaseCount := 3;
+			ELSE 
+				nPhaseCount := 1; 
+			END_IF
+	
+			fCurrent_A := MIN(fRequestedCurrentFromEV, fCurrentLimit_A);
+			fEffectiveChargingPower_kW := fCurrent_A * fVoltage_V * nPhaseCount / 1000.0; // W → kW
+			fPower := fCurrent_A * nPhaseCount * fVoltage_V / 3600.0; 
+			
+			// Charging 
+			IF fStateOfCharge < 100.0 THEN
+				// Power [kWh] per cycletime 
+				fDeltaEnergy_kWh := fEffectiveChargingPower_kW * (fCycleTime / 3600.0); // s → h
+				
+				fChargedEnergy_kwh 	:= fChargedEnergy_kwh + fDeltaEnergy_kWh;
+				fEnergyMeter := fEnergyMeter + (fDeltaEnergy_kWh * 1000); 
+				
+				// SoC
+				fStateOfCharge := fStartSoC + (fChargedEnergy_kwh / fBatteryCapacity_kWh) * 100.0;
+				
+				IF fStateOfCharge > 100.0 THEN
+					fStateOfCharge := 100.0;
+				END_IF
+				
+				// Charging Time 
+				fChargingDuration_s := fChargingDuration_s + fCycleTime;
+				tChargingTime := TO_TIME (fChargingDuration_s * 1000);
+				
+				// Charging Time left (linear)
+				IF fEffectiveChargingPower_kW > 0.0 THEN
+					tRemainingTime_s := TO_TIME(((100.0 - fStateOfCharge) / 100.0 * fBatteryCapacity_kWh / fEffectiveChargingPower_kW * 3600.0) * 1000);
+				ELSE
+					tRemainingTime_s := T#0S;
+				END_IF
+			END_IF
+		END_IF
+	
+	
+		IF NOT bStartCharging THEN 
+			fEffectiveChargingPower_kW := 0; 
+			fCurrent_A := 0; 
+			
+			nState := 30; 
+		END_IF
+	30: // finishing 
+		IF NOT bPlug THEN 
+			nState := 0; 
+		ELSIF bStartCharging THEN 
+			nState := 20; 
+		END_IF
+END_CASE
+
+
+CASE ePhase OF 
+	E_Phase.L123:
+		fCurrentImportL1 := fCurrentImportL2 := fCurrentImportL3 := fCurrent_A; 
+	E_Phase.L1:
+		fCurrentImportL1 := fCurrent_A;
+		fCurrentImportL2 := 0;
+		fCurrentImportL3 := 0;
+	E_Phase.L2:
+		fCurrentImportL1 := 0;
+		fCurrentImportL2 := fCurrent_A;
+		fCurrentImportL3 := 0; 
+	E_Phase.L3:
+		fCurrentImportL1 := 0;
+		fCurrentImportL2 := 0;
+		fCurrentImportL3 := fCurrent_A; 
+END_CASE]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

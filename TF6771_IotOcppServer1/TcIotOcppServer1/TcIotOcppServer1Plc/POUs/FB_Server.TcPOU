@@ -6,11 +6,11 @@ VAR_OUTPUT
 	bValid : BOOL;
 END_VAR
 VAR
-	_fbServer : FB_OCPP1_Server(0);
+	_fbServer 	: FB_OCPP1_Server(0);
 	// receive
-	hStationId : UDINT;
-	hMessageId : T_OCPP_MessageId;
-	eAction : E_OCPP1_Action;
+	hStationId 	: UDINT;
+	hMessageId 	: T_OCPP_MessageId;
+	eAction 	: E_OCPP1_Action;
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[]]></ST>

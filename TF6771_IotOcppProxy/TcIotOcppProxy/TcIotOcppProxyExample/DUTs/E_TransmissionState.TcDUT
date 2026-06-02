@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.8">
+  <DUT Name="E_TransmissionState" Id="{94e87b69-98c6-41de-a0a0-8fd7d357a3a4}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+TYPE E_TransmissionState : 
+(
+	eClientReceive := 0,
+	eClientSend,
+	eClientRespond,
+	eStationSend,
+	eStationReceive,
+	eStationRespond,
+	eFinish
+) UINT;
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -3,46 +3,57 @@
   <POU Name="MAIN" Id="{c472cbd1-f2c3-493c-a973-8278ee533c79}" SpecialFunc="None">
     <Declaration><![CDATA[PROGRAM MAIN
 VAR
-	bInit : BOOL;
+	bInit 	: BOOL;
 	// manual operation
-	bStart : BOOL;
-	bStop : BOOL;
-	bReset : BOOL;
+	bStart 	: BOOL;
+	bStop 	: BOOL;
+	bReset 	: BOOL;
 	// client
-	fbClient : FB_OCPP1_Client(VAR_OCPP.stClientParam);
+	fbClient : FB_OCPP1_Client(VAR_OCPP.stClientParam, 0, 0);
 	// state machine
-	eState : E_OCPP1_SampleState;
-	bError : BOOL;
-	eErrorState : E_OCPP1_SampleState;
-	eChargeStatus : E_OCPP1_ChargePointStatus;
-	eChargeStatusSend : E_OCPP1_ChargePointStatus;
-	bChargeStatusSend : BOOL;
-	eAuthStatus : E_OCPP1_AuthorizationStatus;
-	stIdTagInfo : ST_OCPP1_IdTagInfo; // information about authorization status
+	eState 				: E_OCPP1_SampleState;
+	bError 				: BOOL;
+	eErrorState 		: E_OCPP1_SampleState;
+	eChargeStatus 		: E_OCPP1_ChargePointStatus;
+	eChargeStatusSend 	: E_OCPP1_ChargePointStatus;
+	bChargeStatusSend 	: BOOL;
+	eAuthStatus 		: E_OCPP1_AuthorizationStatus;
+	stIdTagInfo 		: ST_OCPP1_IdTagInfo; 			// information about authorization status
 	// automatic operation
-	bLocalCharge : BOOL; // request to charge from local
-	bRemoteCharge : BOOL; // request to charge from remote
-	sIdTag : T_OCPP1_IdToken; // id of a user tag
-	nConnectorId : UDINT; // id of a used connector
-	eStopReason : E_OCPP1_Reason; // reason to stop charging
+	bLocalCharge 		: BOOL; 						// request to charge from local
+	bRemoteCharge 		: BOOL; 						// request to charge from remote
+	sIdTag 				: T_OCPP1_IdToken; 				// id of a user tag
+	nConnectorId 		: UDINT := 1; 						// id of a used connector
+	eStopReason 		: E_OCPP1_Reason; 				// reason to stop charging
 	// remote operation
-	sStartIdTag : T_OCPP1_IdToken; // id tag of a transaction to be started
-	nStartConnectorId : UDINT; // connector of transaction to be started
-	nStopConnectorId : UDINT; // id of connector to be stopped
-	nUnlockConnectorId : UDINT; // id of connector to be unlocked
-	eResetType : E_OCPP1_ResetType; // requested reset type
-	nAvailConnectorId : UDINT; // connector requested to change availability
-	eAvailabilityType : E_OCPP1_AvailabilityType; // requested availability type
-	hRecvId : T_OCPP_MessageId;
+	sStartIdTag 		: T_OCPP1_IdToken; 				// id tag of a transaction to be started
+	nStartConnectorId 	: UDINT; 						// connector of transaction to be started
+	nStopConnectorId 	: UDINT; 						// id of connector to be stopped
+	nUnlockConnectorId 	: UDINT; 						// id of connector to be unlocked
+	eResetType 			: E_OCPP1_ResetType; 			// requested reset type
+	nAvailConnectorId 	: UDINT; 						// connector requested to change availability
+	eAvailabilityType 	: E_OCPP1_AvailabilityType; 	// requested availability type
+	hRecvId 			: T_OCPP_MessageId;
+	// MeterValues + simulation
+	nSampleInterval 	: TIME := T#10S; 
+	arrSampleValues 	: ARRAY[1.. Param_ocpp.nSampledValuesMax] OF ST_OCPP1_SampledValue;
+	tOnSample 			: TON; 
+	bStartSample 		: BOOL;
+	bSendSample 		: BOOL; 
+	fbChargingSimu 		: FB_ChargingSimu_AC;
+	nTimestamp 			: ULINT; 
+	nIdx 				: UDINT; 
+	fTrigStop			: F_TRIG;
 END_VAR
 VAR PERSISTENT
-	nEnergyMeter : UDINT; // [Wh] meter value of charged energy
-	fEnergyMeterIntegrator : REAL; // [Wh] meter value of charged energy
+	nEnergyMeter 			: UDINT; // [Wh] meter value of charged energy
+	fEnergyMeterIntegrator 	: LREAL; // [Wh] meter value of charged energy
 END_VAR
 VAR CONSTANT
-	nTestConnectorId : UDINT := 1;
-	sTestIdTag : T_OCPP1_IdToken := '1234abcd';
-END_VAR]]></Declaration>
+	sTestIdTag 				: T_OCPP1_IdToken := '1234abcd';
+END_VAR
+
+]]></Declaration>
     <Implementation>
       <ST><![CDATA[IF NOT bInit THEN
 	fbClient.InitOptions(VAR_OCPP.stOptions);
@@ -51,7 +62,6 @@ END_VAR]]></Declaration>
 	fbClient.Execute(TRUE);
 	bInit := TRUE;
 END_IF
-
 // ================================================================================
 // Manual operation of "Charge Point"
 
@@ -61,7 +71,6 @@ IF bStart THEN // start local charging
 	eState := E_OCPP1_SampleState.Authorize;
 	eChargeStatus := E_OCPP1_ChargePointStatus.Preparing;
 	sIdTag := sTestIdTag;
-	nConnectorId := nTestConnectorId;
 END_IF
 
 IF bStop THEN // stop local charging
@@ -129,7 +138,7 @@ CASE eState OF
 				nConnectorId := nConnectorId,
 				nMeterStart := nEnergyMeter,
 				nReservationId := 0,
-				eStatus=> eAuthStatus)
+				eStatus => eAuthStatus)
 		THEN
 			IF NOT fbClient.bError THEN
 				IF eAuthStatus = E_OCPP1_AuthorizationStatus.Accepted THEN
@@ -153,16 +162,12 @@ CASE eState OF
 		END_IF
 
 	E_OCPP1_SampleState.Charging:
-		// Ongoing transaction
-		fEnergyMeterIntegrator := fEnergyMeterIntegrator + 0.01 * 8000; // charging with 8kW at 10ms cycle time
-		nEnergyMeter := LREAL_TO_UDINT(fEnergyMeterIntegrator);
-		// TODO SendMeterValues?
 		IF  NOT bLocalCharge AND NOT bRemoteCharge THEN
 			eState := E_OCPP1_SampleState.Stop;
 			eStopReason := E_OCPP1_Reason.EmergencyStop;
 			eChargeStatus := E_OCPP1_ChargePointStatus.Finishing;
 		END_IF
-
+		
 	E_OCPP1_SampleState.Stop:
 		// Stop transaction
 		// - inform about a transaction that has been stopped
@@ -171,7 +176,7 @@ CASE eState OF
 				nConnectorId := nConnectorId,
 				nMeterStop := nEnergyMeter,
 				eReason := eStopReason,
-				eStatus=> eAuthStatus)
+				eStatus => eAuthStatus)
 		THEN
 			IF NOT fbClient.bError THEN
 				eState := E_OCPP1_SampleState.Idle;
@@ -221,15 +226,15 @@ END_IF
 // Central System can request a Charge Point to stop a transaction
 // - Enable a operator to help a driver that has problems stopping a transaction
 // - Enable mobile apps to control charging transactions via the Central System
-IF fbClient.RecvRemoteStopTransaction(hMessageId=> hRecvId, nConnectorId=> nStopConnectorId) THEN
+IF fbClient.RecvRemoteStopTransaction(hMessageId => hRecvId, nConnectorId => nStopConnectorId) THEN
 	IF nStopConnectorId = nConnectorId THEN
 		bRemoteCharge := FALSE;
 		eState := E_OCPP1_SampleState.Stop;
 		eChargeStatus := E_OCPP1_ChargePointStatus.Finishing;
 		eStopReason := E_OCPP1_Reason.Remote;
-		fbClient.RespRemoteStopTransaction(hMessageId:= hRecvId, eStatus:= E_OCPP1_RemoteStartStopStatus.Accepted);
+		fbClient.RespRemoteStopTransaction(hMessageId := hRecvId, eStatus := E_OCPP1_RemoteStartStopStatus.Accepted);
 	ELSE
-		fbClient.RespRemoteStopTransaction(hMessageId:= hRecvId, eStatus:= E_OCPP1_RemoteStartStopStatus.Rejected);
+		fbClient.RespRemoteStopTransaction(hMessageId := hRecvId, eStatus := E_OCPP1_RemoteStartStopStatus.Rejected);
 	END_IF
 END_IF
 
@@ -296,7 +301,7 @@ IF NOT bChargeStatusSend AND eChargeStatus <> eChargeStatusSend THEN
 	eChargeStatusSend := eChargeStatus;
 END_IF
 IF bChargeStatusSend AND fbClient.IsConnected THEN
-	IF fbClient.SendStatusNotification(nTestConnectorId, E_OCPP1_ChargePointError.NoError, eChargeStatusSend) THEN
+	IF fbClient.SendStatusNotification(nConnectorId, E_OCPP1_ChargePointError.NoError, eChargeStatusSend) THEN
 		bChargeStatusSend := FALSE;
 		IF fbClient.bError THEN
 			bError := TRUE;
@@ -304,7 +309,95 @@ IF bChargeStatusSend AND fbClient.IsConnected THEN
 			eState := E_OCPP1_SampleState.Error;
 		END_IF
 	END_IF
-END_IF]]></ST>
+END_IF
+
+// Charging Simulation
+IF eChargeStatus = E_OCPP1_ChargePointStatus.Charging THEN 
+	fbChargingSimu.bPlug := TRUE; 
+	fbChargingSimu.bStartCharging := TRUE;
+ELSE 
+	fbChargingSimu.bPlug := FALSE; 
+	fbChargingSimu.bStartCharging := FALSE; 
+END_IF
+fbChargingSimu(
+	fStartSoC:= 20, 
+	fBatteryCapacity_kWh:= 20, 
+	fRequestedCurrentFromEV := 16, // 16 A -> 11kW
+	ePhase:= E_Phase.L123, 
+	fCurrentLimit_A:= 12, // 12A -> 8kW  
+	fEnergyMeter := fEnergyMeterIntegrator,
+	fStateOfCharge=> arrSampleValues[1].fValue, 
+	fChargedEnergy_kWh=> arrSampleValues[2].fValue, 
+	fChargingDuration_s=> , 
+	tRemainingTime_s=> , 
+	fVoltageL1N=> arrSampleValues[3].fValue, 
+	fVoltageL2N=> arrSampleValues[4].fValue, 
+	fVoltageL3N=> arrSampleValues[5].fValue, 
+	fCurrentImportL1=> arrSampleValues[6].fValue, 
+	fCurrentImportL2=> arrSampleValues[7].fValue, 
+	fCurrentImportL3=> arrSampleValues[8].fValue, 
+	fEffectiveChargingPower_kW=> arrSampleValues[9].fValue, 
+	tChargingTime=> );
+
+nEnergyMeter := LREAL_TO_UDINT(fEnergyMeterIntegrator);
+
+fTrigStop(CLK := eState = E_OCPP1_SampleState.Charging );
+
+// send Metervalues
+tOnSample(IN := bStartSample ,PT := nSampleInterval);
+IF eState = E_OCPP1_SampleState.Charging OR fTrigStop.Q THEN 
+	bStartSample := TRUE;
+	IF tOnSample.Q OR fTrigStop.Q THEN 
+		bSendSample 	:= TRUE;
+		bStartSample 	:= FALSE;
+		nTimestamp 		:= F_GetSystemTime(); 
+		
+		arrSampleValues[1].eMeasurand := E_OCPP1_Measurand.SoC;
+		arrSampleValues[1].eUnit := E_OCPP1_Unit.Percent; 
+		
+		arrSampleValues[2].eMeasurand := E_OCPP1_Measurand.EnergyActiveImportRegister;
+		arrSampleValues[2].eUnit := E_OCPP1_Unit.kWh;
+		
+		arrSampleValues[3].eMeasurand := E_OCPP1_Measurand.Voltage;
+		arrSampleValues[3].ePhase	:= E_OCPP1_Phase.L1N; 
+		arrSampleValues[3].eUnit	:= E_OCPP1_Unit.V;
+		
+		arrSampleValues[4].eMeasurand := E_OCPP1_Measurand.Voltage;
+		arrSampleValues[4].ePhase	:= E_OCPP1_Phase.L2N; 
+		arrSampleValues[4].eUnit	:= E_OCPP1_Unit.V;
+		
+		arrSampleValues[5].eMeasurand := E_OCPP1_Measurand.Voltage;
+		arrSampleValues[5].ePhase	:= E_OCPP1_Phase.L3N; 
+		arrSampleValues[5].eUnit	:= E_OCPP1_Unit.V;
+		
+		arrSampleValues[6].eMeasurand := E_OCPP1_Measurand.CurrentImport;
+		arrSampleValues[6].ePhase	:= E_OCPP1_Phase.L1; 
+		arrSampleValues[6].eUnit	:= E_OCPP1_Unit.A;
+		
+		arrSampleValues[7].eMeasurand := E_OCPP1_Measurand.CurrentImport;
+		arrSampleValues[7].ePhase	:= E_OCPP1_Phase.L2; 
+		arrSampleValues[7].eUnit	:= E_OCPP1_Unit.A;
+
+		arrSampleValues[8].eMeasurand := E_OCPP1_Measurand.CurrentImport;
+		arrSampleValues[8].ePhase	:= E_OCPP1_Phase.L3; 
+		arrSampleValues[8].eUnit	:= E_OCPP1_Unit.A;
+		
+		arrSampleValues[9].eMeasurand := E_OCPP1_Measurand.PowerActiveImport;
+		arrSampleValues[9].eUnit	:= E_OCPP1_Unit.kW;
+
+		FOR nIdx := 1 TO 9 DO 
+			arrSampleValues[nIdx].nTimestamp := nTimestamp; 
+		END_FOR
+	END_IF
+		
+	IF bSendSample THEN 
+		IF fbClient.SendMeterValue(aSampleValues := arrSampleValues, nSampleCount := 9, nConnectorId := nConnectorId, nTransactionId := 0) THEN 
+			bSendSample := FALSE; 
+		END_IF		
+	END_IF
+END_IF
+
+]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>

@@ -1,0 +1,1312 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.12">
+  <POU Name="FB_Proxy" Id="{01052043-50a3-4b33-b1aa-2d3add5472d5}" SpecialFunc="None">
+    <Declaration><![CDATA[{attribute 'no_explicit_call' := 'do not call this POU directly, use Execute Method!'} 
+{attribute 'reflection'} 
+FUNCTION_BLOCK FB_Proxy
+// ┌──────────────┐       ┌────────────────────┐       ┌──────────┐
+// │              │       │                    │       │          │
+// │   Charging   │       │        Proxy       │       │   OCPP   │
+// │ Station (CS) │◄─────►│ Station <-> Client │◄─────►│  Server  │
+// │              │       │                    │       │          │
+// └──────────────┘       └────────────────────┘       └──────────┘
+VAR
+	{attribute 'instance-path'} 
+    {attribute 'noinit'} 
+	_bClientValid 			: BOOL;
+	_bStationValid			: BOOL;
+	
+	_bIsConnected			: BOOL;
+	_bIsServerOpen 			: BOOL;
+	
+	// Client
+	_fbClient				: FB_OCPP1_Client(0,0,0);
+	bClientConnect 			: BOOL := FALSE; 
+	_stClientParam			: ST_OCPP1_ClientParam;
+	_eClientAction 			: E_OCPP1_Action;
+	// Station
+	_fbStation				: FB_OCPP1_Station(sIdent := '', sAuthHash := '', fbServer := 0);
+	_eStationAction 		: E_OCPP1_Action;
+	
+	_stBoot 				: REFERENCE TO ST_OCPP1_ClientBootInfo; 
+	_bInitBoot 				: REFERENCE TO BOOL; 
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Folder Name="ClientRecv" Id="{f2cef4a1-e1e4-48de-82cc-7b15a4e17f6b}" />
+    <Folder Name="ServerRecv" Id="{0f58740d-0e69-4f60-b1b7-221b7bcec4bf}" />
+    <Method Name="ClientPollRequest" Id="{d07ff275-7412-4470-8d69-f71e9e5cbe8b}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientPollRequest : BOOL
+VAR_INST
+	hMessageId 	: T_OCPP_MessageId;
+	eError 		: E_OCPP1_Error;
+	nState		: UDINT;
+END_VAR
+VAR CONSTANT
+
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbClient.PollRequest(hMessageID => hMessageId, eAction => _eClientAction) THEN
+	ClientPollRequest := TRUE;
+END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvCancelReservation1" Id="{bd101bd1-2a65-4290-85a7-7f8389da8669}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvCancelReservation1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	eStatus			: E_OCPP1_CancelReservationStatus;
+	eError 			: E_OCPP1_Error;
+	nReservationId	: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvCancelReservation(hMessageId => hMessageId, nReservationId => nReservationId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendCancelReservation(nReservationId := nReservationId, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespCancelReservation(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvChangeAvailability1" Id="{253c6ccb-dd1e-49a9-a44e-e7a5c52d5417}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvChangeAvailability1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nConnectorId 	: UDINT;
+	eType 			: E_OCPP1_AvailabilityType;
+	eStatus 		: E_OCPP1_AvailabilityStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvChangeAvailability(hMessageId => hMessageId, nConnectorId => nConnectorId, eType => eType) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendChangeAvailability(nConnectorId := nConnectorId, eType := eType, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespChangeAvailability(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvChangeConfiguration1" Id="{8c1f4dbf-0fc4-47e8-bb89-c62ee6eafd38}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvChangeConfiguration1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	sKey		: T_OCPP1_ConfigKey;
+	sValue		: T_OCPP1_ConfigValue;
+	eStatus		: E_OCPP1_ConfigurationStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvChangeConfiguration(hMessageId => hMessageId, sKey => sKey, sValue => sValue) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendChangeConfiguration(sKey := sKey, sValue := sValue, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespChangeConfiguration(hMessageId := hMessageId, eStatus :=eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvClearCache1" Id="{123ce3f4-ea17-4869-a9fd-23298a75520e}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvClearCache1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	eStatus		: E_OCPP1_ClearCacheStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvClearCache(hMessageId => hMessageId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendClearCache(eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespClearCache(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvClearChargingProfile1" Id="{166b6bb6-69f2-4ff5-ab81-1d46f052a81f}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvClearChargingProfile1 : BOOL
+VAR_INST
+	nState					: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 				: T_OCPP_MessageId;
+	nConnectorId			: UDINT;
+	eChargingProfilePurpose	: E_OCPP1_ChargingProfilePurposeType;
+	nStackLevel				: UDINT;
+	nProfileId				: UDINT;
+	eStatus					: E_OCPP1_ClearChargingProfileStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvClearChargingProfile(hMessageId => hMessageId, nProfileId => nProfileId, nConnectorId => nConnectorId, eChargingProfilePurpose => eChargingProfilePurpose, nStackLevel => nStackLevel) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendClearChargingProfile(nProfileId := nProfileId, nConnectorId := nConnectorId, eChargingProfilePurpose := eChargingProfilePurpose, nStackLevel := nStackLevel, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespClearChargingProfile(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvDataTransfer1" Id="{2ef82fcd-422b-41b4-885e-11659cda5fdc}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvDataTransfer1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	sData		: T_OCPP1_DataTransferData;
+	sVendorId	: STRING(255);
+	sMessageId	: STRING(63);
+	eStatus		: E_OCPP1_DataTransferStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvDataTransfer(hMessageId => hMessageId, sVendorId => sVendorId, sMessageId => sMessageId, sData := sData,)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+		
+	E_TransmissionState.eStationSend: 
+		IF _fbStation.SendDataTransfer(sVendorId := sVendorId, sData := sData, eStatus => eStatus, sMessageId := sMessageId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF
+		
+	E_TransmissionState.eClientRespond:
+		_fbClient.RespDataTransfer(hMessageId := hMessageId, eStatus := eStatus); 
+		nState := E_TransmissionState.eFinish;
+		
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;				
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvGetCompositeSchedule1" Id="{62a425f3-42ab-4176-878b-939edfb3c9e1}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvGetCompositeSchedule1 : BOOL
+VAR_INST
+	nState					: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 				: T_OCPP_MessageId;
+	nDuration				: UDINT;
+	eChargingRateUnit		: E_OCPP1_ChargingRateUnitType;
+	nConnectorId			: UDINT;
+	eStatus					: E_OCPP1_GetCompositeScheduleStatus;
+	nConnectorIdRes			: UDINT;
+	nScheduleStart			: ULINT;
+	mChargingSchedule		: ST_OCPP1_ChargingSchedule;
+	mChargingScheduleMax	: ST_OCPP1_ChargingScheduleMax;
+END_VAR
+
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvGetCompositeSchedule(hMessageId => hMessageId, nConnectorId => nConnectorId, nDuration => nDuration, eChargingRateUnit => eChargingRateUnit) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendGetCompositeSchedule(nConnectorId := nConnectorId, nDuration := nDuration, eChargingRateUnit := eChargingRateUnit, eStatus => eStatus, nConnectorIdRes => nConnectorIdRes, nScheduleStart => nScheduleStart, mChargingSchedule => mChargingScheduleMax) THEN
+			mChargingSchedule.eRateUnit 	:= mChargingScheduleMax.eRateUnit;
+			mChargingSchedule.fRateMin 		:= mChargingScheduleMax.fRateMin; 
+			mChargingSchedule.nDuration 	:= mChargingScheduleMax.nDuration; 
+			mChargingSchedule.nPeriodCount 	:= mChargingScheduleMax.nPeriodCount; 
+			mChargingSchedule.nStart 		:= mChargingScheduleMax.nStart; 
+			
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond:
+		IF eStatus = E_OCPP1_GetCompositeScheduleStatus.Rejected THEN
+		 	_fbClient.RespGetCompositeSchedule(hMessageId := hMessageId, eStatus := eStatus, nConnectorId := nConnectorId);
+		ELSE
+			_fbClient.RespGetCompositeSchedule(hMessageId := hMessageId, eStatus := eStatus, nConnectorId := nConnectorId, nScheduleStart := nScheduleStart, mChargingSchedule := mChargingSchedule);
+		END_IF
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvGetConfiguration1" Id="{dd58ee51-d7c8-4425-99c3-fb0772766ae7}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvGetConfiguration1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nKeysCount		: UDINT;
+	aKeyList		: ARRAY [1..Param_OCPP.nConfigKeysMax] OF T_OCPP1_ConfigKey;
+	aKeyValueList	: ARRAY [1..Param_OCPP.nConfigKeysMax] OF ST_OCPP1_ConfigKeyValue;
+	nUnknownCount	: UDINT;
+	aUnknown		: ARRAY[1..Param_OCPP.nConfigKeysMax] OF T_OCPP1_ConfigKey;
+END_VAR
+VAR
+	i: UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvGetConfiguration(hMessageId => hMessageId, nKeysCount => nKeysCount, aKeys => aKeyList) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		FOR i := 1 TO Tc3_OCPP.Param_OCPP.nConfigKeysMax BY 1 DO
+			aKeyValueList[i].sKey := aKeyList[i];
+		END_FOR
+		
+		IF _fbStation.SendGetConfiguration(aKeys := aKeyValueList, nKeysCount => nKeysCount, nUnknownCount => nUnknownCount) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespGetConfiguration(hMessageId := hMessageId, nKeysCount := nKeysCount, nUnknownCount := nUnknownCount, aKeys := aKeyValueList, aUnknown := aUnknown);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvGetDiagnostics1" Id="{c6ac4056-90c1-41a9-bc87-ab6fd200ef48}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvGetDiagnostics1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	sLocation		: STRING(255);
+	nRetries		: UDINT;
+	nRetryInterval	: UDINT;
+	nStartTime		: ULINT;
+	nStopTime		: ULINT;
+	sFileName		: STRING(255);
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvGetDiagnostics(hMessageId => hMessageId, sLocation => sLocation, nRetries => nRetries , nRetryInterval => nRetryInterval, nStartTime => nStartTime, nStopTime => nStopTime) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendGetDiagnostics(sLocation := sLocation, nRetries := nRetries, nRetryInterval := nRetryInterval, nStartTime := nStartTime, nStopTime := nStopTime , sFileName => sFileName ) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespGetDiagnostics(hMessageId := hMessageId, sFileName := sFileName);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvGetLocalListVersion1" Id="{02164b32-afb5-4b34-958c-64e54098f88a}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvGetLocalListVersion1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nListVersion	: UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvGetLocalListVersion(hMessageId => hMessageId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendGetLocalListVersion(nListVersion => nListVersion) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespGetLocalListVersion(hMessageId := hMessageId, nListVersion := nListVersion);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvLocalList1" Id="{e6349d5b-ee2a-4e36-8f83-b0f92b74a2ea}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvLocalList1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId		: T_OCPP_MessageId;
+	aAuthList		: ARRAY[0..Param_OCPP.nAuthListMax] OF ST_OCPP1_AuthorizationData;
+	nListVersion	: UDINT;
+	eUpdateType		: E_OCPP1_UpdateType;
+	nAuthCount		: UDINT;
+	eStatus			: E_OCPP1_UpdateStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvLocalList(hMessageId => hMessageId, aAuthList := aAuthList, nListVersion => nListVersion, eUpdateType => eUpdateType, eUpdateType => eUpdateType, nAuthCount => nAuthCount) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendLocalList(nListVersion := nListVersion, eUpdateType := eUpdateType, nAuthCount := nAuthCount, aAuthList := aAuthList, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespLocalList(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvRemoteStartTransaction1" Id="{35473e99-f25e-41a1-a1e3-8f5c3ea0bceb}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvRemoteStartTransaction1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nConnectorId 	: UDINT;
+	sIdToken 		: T_OCPP1_IdToken;
+	eStatus			: E_OCPP1_RemoteStartStopStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvRemoteStartTransaction(hMessageId => hMessageId, nConnectorId => nConnectorId, sIdToken => sIdToken) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendRemoteStartTransaction(nConnectorId := nConnectorId, sIdToken := sIdToken, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespRemoteStartTransaction(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;		
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvRemoteStopTransaction1" Id="{6d41c5bc-d39a-4d2e-80b3-574324ebf6ba}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvRemoteStopTransaction1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nConnectorId 	: UDINT;
+	eStatus			: E_OCPP1_RemoteStartStopStatus;
+	nTransactionId	: UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvRemoteStopTransaction(hMessageId => hMessageId, nConnectorId => nConnectorId, nTransactionId => nTransactionId)THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendRemoteStopTransaction(nTransactionId := nTransactionId, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespRemoteStopTransaction(hMessageId := hMessageId, eStatus := eStatus); 
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvReserveNow1" Id="{ce560cb4-5a4b-46a5-bd9d-aa1876aaac87}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvReserveNow1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nConnectorId	: UDINT;
+	nExpiryDate		: ULINT;
+	sIdTag			: T_OCPP1_IdToken;
+	sParentIdTag	: T_OCPP1_IdToken;
+	nReservationId	: UDINT;
+	eStatus			: E_OCPP1_ReservationStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvReserveNow(hMessageId => hMessageId, nConnectorId => nConnectorId, nExpiryDate => nExpiryDate, sIdTag => sIdTag, sParentIdTag => sParentIdTag, nReservationId => nReservationId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendReserveNow(nConnectorId := nConnectorId, nExpiryDate := nExpiryDate, sIdTag := sIdTag, sParentIdTag := sParentIdTag, nReservationId := nReservationId, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespReserveNow(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvReset1" Id="{daabd219-182c-4609-a10d-6995e0c586a7}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvReset1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	eType		: E_OCPP1_ResetType;
+	eStatus		: E_OCPP1_ResetStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvReset(hMessageId => hMessageId, eType => eType) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendReset(eType := eType, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespReset(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;		
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvSetChargingProfile1" Id="{1b0c5c8e-a56a-44ac-a713-7c313c5ac345}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvSetChargingProfile1 : BOOL
+VAR_INST
+	nState				: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 			: T_OCPP_MessageId;
+	nConnectorId		: UDINT;
+	mChargingProfile	: ST_OCPP1_ChargingProfileMax;
+	eStatus				: E_OCPP1_ChargingProfileStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvSetChargingProfile(hMessageId => hMessageId, nConnectorId => nConnectorId, mChargingProfile => mChargingProfile) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+		
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendChargingProfile(nConnectorId := nConnectorId, mChargingProfile := mChargingProfile, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespSetChargingProfile(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvTriggerMessage1" Id="{7e01f275-6ce9-49c9-bac4-8d51a08344b5}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvTriggerMessage1 : BOOL
+VAR_INST
+	nState				: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 			: T_OCPP_MessageId;
+	eRequestedMessage	: E_OCPP1_MessageTrigger;
+	nConnectorId		: UDINT;
+	eStatus				: E_OCPP1_TriggerMessageStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvTriggerMessage(hMessageId => hMessageId, eRequestedMessage => eRequestedMessage, nConnectorId => nConnectorId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendTriggerMessage(eRequestedMessage := eRequestedMessage, nConnectorId := nConnectorId, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespTriggerMessage(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvUnlockConnector1" Id="{1cdbe721-2b72-4807-91ef-485d2be05266}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvUnlockConnector1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nConnectorId	: UDINT;
+	eStatus			: E_OCPP1_UnlockStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvUnlockConnector(hMessageId => hMessageId, nConnectorId => nConnectorId)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendUnlockConnector(nConnectorId := nConnectorId, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespUnlockConnector(hMessageId := hMessageId, eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ClientRecvUpdateFirmware1" Id="{0fce67f9-a139-4c86-ab05-a1cd1cd9c9fd}" FolderPath="ClientRecv\">
+      <Declaration><![CDATA[METHOD ClientRecvUpdateFirmware1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eClientReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	sLocation		: STRING(255);
+	nRetries		: UDINT;
+	nRetryInterval	: UDINT;
+	nRetrieveDate	: ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eClientReceive: 
+		IF _fbClient.RecvUpdateFirmware(hMessageId => hMessageId, sLocation => sLocation, nRetries => nRetries, nRetryInterval => nRetryInterval, nRetrieveDate => nRetrieveDate)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationSend;
+		ELSE 
+			_eClientAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eStationSend:
+		IF _fbStation.SendUpdateFirmware(sLocation := sLocation, nRetries := nRetries, nRetryInterval := nRetryInterval , nRetrieveDate := nRetrieveDate) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientRespond;
+		END_IF	
+	E_TransmissionState.eClientRespond: 
+		_fbClient.RespUpdateFirmware(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eClientReceive;		
+		_eClientAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Execute" Id="{e7081f7b-d1ff-421e-8228-5b81d5bc5757}">
+      <Declaration><![CDATA[METHOD Execute : BOOL
+VAR_INST
+	bStationError 	: BOOL;
+	bClientError 	: BOOL;
+	bResetClient 	: BOOL; 
+	bResetStation 	: BOOL; 
+	bPendingClient 	: BOOL; 
+	bPendingStation : BOOL;
+END_VAR
+VAR_INPUT
+END_VAR
+// ┌──────────────┐       ┌────────────────────┐       ┌──────────┐
+// │              │       │                    │       │          │
+// │   Charging   │       │        Proxy       │       │   OCPP   │
+// │ Station (CS) │◄─────►│ Station <-> Client │◄─────►│  Server  │
+// │              │       │                    │       │  (CSMS)  │
+// └──────────────┘       └────────────────────┘       └──────────┘
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[//theoretically only when messages are forwarded from the Server to the Client
+bStationError := _fbStation.bError; 
+
+//theoretically only when messages are forwarded from the Client to the Server 
+bClientError := _fbClient.bError; 
+
+// Manual reset
+IF bResetClient THEN 
+	_fbClient.Reset(); 
+	bResetClient := FALSE; 
+END_IF
+IF bResetStation THEN 
+	_fbStation.Reset();
+	bResetStation := FALSE; 
+END_IF
+
+bPendingClient := _fbClient.IsPending;
+bPendingStation := _fbStation.IsPending;
+
+_bClientValid := _fbClient.bValid;
+_bStationValid := _fbStation.bValid;
+
+// Automatic disconnect logic 
+_bIsServerOpen := _fbStation.IsConnected;
+IF NOT _bIsServerOpen AND _eStationAction <> E_OCPP1_Action.BootNotification THEN 
+	bClientConnect := FALSE; 
+END_IF
+_bIsConnected := _fbClient.IsConnected;
+IF NOT _bIsConnected AND _eClientAction <> E_OCPP1_Action.None THEN 
+	IF _eClientAction <> E_OCPP1_Action.BootNotification THEN 
+		_eClientAction := E_OCPP1_Action.None; 
+	END_IF
+END_IF
+
+// reconnect on previous Websocket
+IF _bIsConnected AND _bInitBoot THEN 
+	bClientConnect := TRUE; 
+END_IF
+_fbClient.Execute(bConnect := bClientConnect);
+
+//////////////////////////////////////////////////
+// Message triggered by CS -> StationRecv methods
+//////////////////////////////////////////////////
+
+// Communication sample for StartTransaction:
+(*
+       ChargingStation                                                           Proxy                                                        ChargingStationManagementSystem
+ ___________________________       ______________________________________________________________________________________________________       ____________________________
+|                           |     |                                |                                  |                                  |     |                            |
+| CS.SendStartTransaction   | ──► | Station.RecvStartTransaction   ─►  Client copy StartTransaction   ─►  Client.SendStartTransaction    | ──► | CSMS.RecvStartTransaction  |
+|___________________________|     |________________________________|__________________________________|__________________________________|     |____________________________|
+                                                                                    Λ
+                                                                                    |                                                                        |
+                                                           Area for manipulating the data in ServerRecv method                                               | best case:
+														   between _fbStation.RecvStartTransaction and _fbClient.SendStartTransaction					     | CSMS accepts StartTransaction
+                                                                                                                                                             V								
+ ___________________________       ______________________________________________________________________________________________________       ____________________________
+|                           |     |                                |                                   |                                 |     |                            |
+| CS.Send{Output => accept} | ◄── |      Station.Resp{accept}      ◄─ Client passes message to Station ◄─  Client.Send{Output => accept} | ◄── |     CSMS.Resp{accepted}    |
+|___________________________|     |________________________________|___________________________________|_________________________________|     |____________________________|
+
+*)
+CASE _eStationAction OF
+	E_OCPP1_Action.None: 							StationPollRequest1();
+	E_OCPP1_Action.Authorize: 						StationRecvAuthorize1();			
+	E_OCPP1_Action.BootNotification:				StationRecvBootNotification1();
+	E_OCPP1_Action.DataTransfer: 					StationRecvDataTransfer1();
+	E_OCPP1_Action.DiagnosticsStatusNotification: 	StationRecvDiagnosticsStatusNotification1();
+	E_OCPP1_Action.FirmwareStatusNotification: 		StationRecvFirmwareStatusNotification1();
+	E_OCPP1_Action.Heartbeat: 						StationRecvHeartbeat1();
+	E_OCPP1_Action.MeterValues: 					StationRecvMeterValues1();
+	E_OCPP1_Action.SecurityEventNotification: 		StationRecvSecurityEventNotification1();
+	E_OCPP1_Action.StartTransaction: 				StationRecvStartTransaction1();
+	E_OCPP1_Action.StatusNotification: 				StationRecvStatusNotification1();
+	E_OCPP1_Action.StopTransaction: 				StationRecvStopTransaction1();
+END_CASE
+
+//////////////////////////////////////////////////
+// Message triggered by CSMS -> ClientRecv Methods
+//////////////////////////////////////////////////
+
+// Communication Sample for RemoteStartTransaction:
+(* 
+   ChargingStationManagementSystem                                                               Proxy                                                                     ChargingStation
+ ___________________________________       ________________________________________________________________________________________________________________       __________________________________ 
+|                                   |     |                                      |                                 |                                       |     |                                  |
+| CSMS.Send{RemoteStartTransaction} | ──► |  Client.Recv{RemoteStartTransaction} ─► Station copy TransactionInfo   ─►  Server.Send{RemoteStartTransaction} | ──► | CS.Recv{RemoteStartTransaction}  |
+|___________________________________|     |______________________________________|_________________________________|_______________________________________|     |__________________________________|
+                                                                                                   Λ
+                                                                                                   |                                                                                 |
+                                                                          Area for manipulating the data in ClientRecv Method                                                        | best case:
+																between _fbStation.SendRemoteStartTransaction and _fbClient.RecvRemoteStartTransaction  						     | CS accepts RemoteStartTransaction
+														                    	     		     												                                     V
+
+ ___________________________________       ________________________________________________________________________________________________________________       __________________________________ 
+|                                   |     |                                       |                                 |                                      |     |                                  |
+|    CSMS.Send{Output => accept}    | ◄── | Client.Resp{RemoteStartTransaction}   ◄─  Station passes msg to Client  ◄─    Server.Send{Output => accept}    | ◄── |          CS.Resp{accept}         |
+|___________________________________|     |_______________________________________|_________________________________|______________________________________|     |__________________________________|
+*)
+CASE _eClientAction OF
+	E_OCPP1_Action.None: 						ClientPollRequest();
+	E_OCPP1_Action.CancelReservation: 			ClientRecvCancelReservation1();
+	E_OCPP1_Action.ChangeAvailability: 			ClientRecvChangeAvailability1();
+	E_OCPP1_Action.ChangeConfiguration: 		ClientRecvChangeConfiguration1();
+	E_OCPP1_Action.SetChargingProfile: 			ClientRecvSetChargingProfile1();
+	E_OCPP1_Action.ClearCache: 					ClientRecvClearCache1();
+	E_OCPP1_Action.ClearChargingProfile: 		ClientRecvClearChargingProfile1();
+	E_OCPP1_Action.GetCompositeSchedule: 		ClientRecvGetCompositeSchedule1();
+	E_OCPP1_Action.GetConfiguration: 			ClientRecvGetConfiguration1();
+	E_OCPP1_Action.GetDiagnostics: 				ClientRecvGetDiagnostics1();
+	E_OCPP1_Action.GetLocalListVersion: 		ClientRecvGetLocalListVersion1();
+	E_OCPP1_Action.SendLocalList: 				ClientRecvLocalList1();
+	E_OCPP1_Action.RemoteStartTransaction: 		ClientRecvRemoteStartTransaction1();
+	E_OCPP1_Action.RemoteStopTransaction: 		ClientRecvRemoteStopTransaction1();
+	E_OCPP1_Action.ReserveNow: 					ClientRecvReserveNow1();
+	E_OCPP1_Action.Reset: 						ClientRecvReset1();
+	E_OCPP1_Action.TriggerMessage: 				ClientRecvTriggerMessage1();
+	E_OCPP1_Action.UnlockConnector: 			ClientRecvUnlockConnector1();
+	E_OCPP1_Action.UpdateFirmware: 				ClientRecvUpdateFirmware1();
+	E_OCPP1_Action.DataTransfer: 				ClientRecvDataTransfer1();
+END_CASE
+
+
+
+ 
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="FB_Init" Id="{21987080-eb09-4fec-aa1f-e1f69cfdf0e3}">
+      <Declaration><![CDATA[//FB_Init is always available implicitly and it is used primarily for initialization.
+//The return value is not evaluated. For a specific influence, you can also declare the
+//methods explicitly and provide additional code there with the standard initialization
+//code. You can evaluate the return value.
+METHOD FB_Init: BOOL
+VAR_INPUT
+    bInitRetains		: BOOL; // TRUE: the retain variables are initialized (reset warm / reset cold)
+    bInCopyCode			: BOOL; // TRUE: the instance will be copied to the copy code afterward (online change)   
+	fbServer			: REFERENCE TO FB_OCPP1_Server;
+	stClientParam		: ST_OCPP1_ClientParam;
+	stBootInfo 			: REFERENCE TO ST_OCPP1_ClientBootInfo;
+	sIdent				: T_OCPP_Identity;
+	sAuthHash			: T_OCPP_Hash;
+	tConnectionTimeout	: TIME;
+	bInitBoot 			: REFERENCE TO BOOL;
+END_VAR
+
+
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[FB_Init:= this^.Init(fbServer := fbServer, stClientParam := stClientParam, stBootInfo := stBootInfo, sIdent := sIdent, sAuthHash := sAuthHash, tConnectionTimeout := tConnectionTimeout, bInitBoot := bInitBoot);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Init" Id="{74d88e78-d958-4ef2-9479-9f941b576286}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_INPUT
+	fbServer			: REFERENCE TO FB_OCPP1_Server;
+	stClientParam		: ST_OCPP1_ClientParam;
+	stBootInfo 			: REFERENCE TO ST_OCPP1_ClientBootInfo;
+	sIdent				: T_OCPP_Identity;
+	sAuthHash			: T_OCPP_Hash;
+	tConnectionTimeout	: TIME;
+	bInitBoot 			: REFERENCE TO BOOL;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[Init := _fbStation.Init(sIdent, sAuthHash, fbServer) AND _fbClient.Init(stParam := stClientParam) AND _fbClient.InitBootInfo(stBootInfo);
+_stBoot REF= stBootInfo; 
+_bInitBoot REF= bInitBoot; 
+_stClientParam := stClientParam;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationPollRequest1" Id="{9ccda700-2443-43b1-93c8-2bc606eb88ac}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationPollRequest1 : BOOL
+VAR_INST
+	hStationId 	: UDINT;
+	hMessageId	: T_OCPP_MessageId;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _fbStation.PollRequest(hMessageID => hMessageId, eAction => _eStationAction) THEN
+	StationPollRequest1 := TRUE;
+END_IF
+ ]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvAuthorize1" Id="{ee109a3b-b384-434f-9e22-04a3edec7a92}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvAuthorize1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	sIdTag 		: T_OCPP1_IdToken;
+	eStatus 	: E_OCPP1_AuthorizationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvAuthorize(hMessageId => hMessageId, sIdTag => sIdTag)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendAuthorize(sIdTag := sIdTag, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespAuthorize(hMessageId := hMessageId , eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvBootNotification1" Id="{a90d1d2a-4edc-4a2c-abae-3206910ff15c}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvBootNotification1 : BOOL
+VAR_INST
+	nState				: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 			: T_OCPP_MessageId;
+	sModel				: STRING(31);
+	sVendor				: STRING(31);
+	sChargeBoxSerial	: STRING(31);
+	sChargePointSerial	: STRING(31);
+	sFirmwareVersion	: STRING(63);
+	sMeterSerial		: STRING(31);
+	sMeterType			: STRING(31);
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvBootNotification(hMessageId => hMessageId, sModel => sModel, sVendor => sVendor, sChargeBoxSerial => sChargeBoxSerial, sChargePointSerial => sChargePointSerial, sFirmwareVersion => sFirmwareVersion, sMeterSerial => sMeterSerial, sMeterType => sMeterType)  THEN
+			_stBoot.sChargePointModel 			:= sModel;
+			_stBoot.sChargePointVendor 			:= sVendor;
+			_stBoot.sChargeBoxSerialNumber 		:= sChargeBoxSerial;
+			_stBoot.sChargePointSerialNumber 	:= sChargePointSerial;
+			_stBoot.sFirmwareVersion 			:= sFirmwareVersion;
+			_stBoot.sMeterSerialNumber 			:= sMeterSerial;
+			_stBoot.sMeterType 					:= sMeterType;
+			// Implement data changes here
+			nState 								:= E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		// Update BootInfo
+		IF _fbClient.InitBootInfo(stBootInfo := _stBoot) THEN
+			_bInitBoot := TRUE;
+			// Send BootNotification with setting bClientConnect to TRUE
+			bClientConnect := TRUE;
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		IF _fbClient.IsConnected THEN
+			_fbStation.RespBootNotification(hMessageId := hMessageId, eStatus:= E_OCPP1_RegistrationStatus.Accepted, tHeartbeatInterval := _fbClient.HeartbeatInterval);
+			nState := E_TransmissionState.eFinish;
+		ELSIF _fbClient.hrErrorResult = 16#719 THEN 
+			bClientConnect := FALSE; 
+			_eStationAction := E_OCPP1_Action.None;	
+		END_IF
+
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvDataTransfer1" Id="{a8cde21c-6cb1-4003-b985-5aaf8de34b6f}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvDataTransfer1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	sData 		: T_OCPP1_DataTransferData;
+	sVendorId	: STRING(255);
+	sMessageId	: STRING(63);
+	eStatus		: E_OCPP1_DataTransferStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvDataTransfer(hMessageId => hMessageId, sVendorId => sVendorId, sMessageId => sMessageId, sData := sData)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendDataTransfer(sVendorId := sVendorId, sMessageId := sMessageId, sData := sData, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespDataTransfer(hMessageId := hMessageId , eStatus := eStatus);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvDiagnosticsStatusNotification1" Id="{1e50b9ce-1676-4b06-8c11-0fee7c44cd7b}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvDiagnosticsStatusNotification1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	eStatus 	: E_OCPP1_DiagnosticsStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvDiagnosticsStatusNotification(hMessageId => hMessageId, eStatus => eStatus)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendDiagnosticsStatusNotification(eStatus := eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespDiagnosticsStatusNotification(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvFirmwareStatusNotification1" Id="{d55275b8-d6c2-4735-91e4-7c763a99246b}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvFirmwareStatusNotification1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	eStatus		: E_OCPP1_FirmwareStatus;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvFirmwareStatusNotification(hMessageId => hMessageId, eStatus => eStatus)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendFirmwareStatusNotification(eStatus := eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespFirmwareStatusNotification(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvHeartbeat1" Id="{e67ff1f6-62a1-4735-9624-cb9a6e453e92}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvHeartbeat1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 	: T_OCPP_MessageId;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvHeartbeat(hMessageId => hMessageId)  THEN
+			// Implement data changes here
+				nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendHeartbeat() THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespHeartbeat(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvMeterValues1" Id="{c7920d70-a30d-409e-bc42-976d48f2b5b2}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvMeterValues1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	aSampleValues 	: ARRAY[1..Param_OCPP.nSampledValuesMax] OF ST_OCPP1_SampledValue;
+	nConnectorId	: UDINT;
+	nTransactionId	: UDINT;
+	nSampleCount	: UDINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvMeterValue(hMessageId => hMessageId, nConnectorId => nConnectorId, nTransactionId => nTransactionId, nSampleCount => nSampleCount, aSampleValues := aSampleValues)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendMeterValue(nConnectorId := nConnectorId, nSampleCount := nSampleCount, aSampleValues := aSampleValues, nTransactionId := 0) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespMeterValue(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvSecurityEventNotification1" Id="{d2225186-976a-4502-8033-4c343c108d6f}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvSecurityEventNotification1 : BOOL
+VAR_INST
+	nState		: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 	: T_OCPP_MessageId;
+	nTimestamp	: ULINT;
+	sType		: STRING(63);
+	sInfo		: STRING(256);
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvSecurityEventNotification(hMessageId => hMessageId, nTimestamp => nTimestamp, sType => sType, sInfo => sInfo)  THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendSecurityEventNotification(nTimestamp := nTimestamp, sType := sType, sInfo := sInfo) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespSecurityEventNotification(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvStartTransaction1" Id="{a88288bc-1a4b-48ed-bea2-700b2285bf6c}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvStartTransaction1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	sIdTag			: Tc3_OCPP.T_OCPP1_IdToken;
+	nConnectorId	: UDINT;
+	nMeterStart		: UDINT;
+	nReservationId	: UDINT;
+	nTimestamp		: ULINT;
+	eStatus 		: E_OCPP1_AuthorizationStatus;
+	nTransactionId	: UDINT;	
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvStartTransaction(hMessageId => hMessageId, sIdTag => sIdTag, nConnectorId => nConnectorId, nMeterStart => nMeterStart, nReservationId => nReservationId, nTimestamp => nTimestamp) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF	
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendStartTransaction(sIdTag := sIdTag, nConnectorId := nConnectorId, nMeterStart := nMeterStart, nReservationId := nReservationId, eStatus => eStatus, nTransactionId => nTransactionId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespStartTransaction(hMessageId := hMessageId, eStatus := eStatus, nTransactionId := nTransactionId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvStatusNotification1" Id="{2303bd6e-8ada-41d0-913c-828d378d203f}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvStatusNotification1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	nConnectorId	: UDINT;
+	eStatus			: E_OCPP1_ChargePointStatus;
+	nTimestamp		: ULINT;
+	sInfo			: STRING(63);
+	sVendorError	: STRING(63);
+	sVendorId		: STRING(255);
+	eError			: E_OCPP1_ChargePointError;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvStatusNotification(hMessageId => hMessageId, nConnectorId => nConnectorId, eError => eError, eStatus => eStatus, nTimestamp => nTimestamp, sInfo => sInfo, sVendorError => sVendorError, sVendorId => sVendorId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendStatusNotification(nConnectorId := nConnectorId, eError:= eError, eStatus := eStatus, sInfo := sInfo, sVendorError := sVendorError, sVendorId := sVendorId) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespStatusNotification(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="StationRecvStopTransaction1" Id="{bdc378f3-0c8c-4d4e-a5d5-0340111f78d0}" FolderPath="ServerRecv\">
+      <Declaration><![CDATA[METHOD StationRecvStopTransaction1 : BOOL
+VAR_INST
+	nState			: E_TransmissionState := E_TransmissionState.eStationReceive;
+	hMessageId 		: T_OCPP_MessageId;
+	sIdTag			: T_OCPP1_IdToken;
+	nTranscationId	: UDINT;
+	nConnectorId	: UDINT;
+	nMeterStop		: UDINT;
+	nTimestamp		: ULINT;
+	eReason			: E_OCPP1_Reason;
+	nTransactionId	: UDINT;
+	eStatus			: E_OCPP1_AuthorizationStatus;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE nState OF
+	E_TransmissionState.eStationReceive: 
+		IF _fbStation.RecvStopTransaction(hMessageId => hMessageId, sIdTag => sIdTag, nTransactionId => nTransactionId, nConnectorId => nConnectorId, nMeterStop => nMeterStop, nTimestamp => nTimestamp, eReason => eReason) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eClientSend;
+		ELSE 
+			_eStationAction := E_OCPP1_Action.None;
+		END_IF
+	E_TransmissionState.eClientSend:
+		IF _fbClient.SendStopTransaction(sIdTag := sIdTag, nConnectorId := nConnectorId, nMeterStop := nMeterStop, eReason := eReason, eStatus => eStatus) THEN
+			// Implement data changes here
+			nState := E_TransmissionState.eStationRespond;
+		END_IF	
+	E_TransmissionState.eStationRespond: 
+		_fbStation.RespStatusNotification(hMessageId := hMessageId);
+		nState := E_TransmissionState.eFinish;
+	E_TransmissionState.eFinish: 
+		nState := E_TransmissionState.eStationReceive;		
+		_eStationAction := E_OCPP1_Action.None;			
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>
